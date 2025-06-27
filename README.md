@@ -24,6 +24,9 @@ This is the current status of the implementations for the core rules and structu
 ## Build 
 
 mkdir build 
+
 cd build
+
 cmake -G Ninja ..
+
 ninga
