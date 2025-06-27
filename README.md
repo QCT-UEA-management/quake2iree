@@ -19,3 +19,11 @@ This is the current status of the implementations for the core rules and structu
 | TypeConverter               | ❌ Not needed (yet) | ✅ Optional      |
 | Recursive legality          | ❌ Not needed (yet) | ✅ Optional      |
 | Legal operation enforcement | ✅ Yes              | ✅ Fully matched |
+
+
+## Build 
+
+mkdir build 
+cd build
+cmake -G Ninja ..
+ninga

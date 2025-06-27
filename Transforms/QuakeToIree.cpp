@@ -7,7 +7,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 
 // Include your Quake dialect headers
-#include "Quake/QuakeOps.h"
+#include "Dialect/Quake/QuakeOps.h"
 
 using namespace mlir;
 
