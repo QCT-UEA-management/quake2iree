@@ -1,12 +1,15 @@
-find_package(MLIR REQUIRED CONFIG)
 
-add_mlir_dialect_library(MyConversion
-  MyPass.cpp
+add_mlir_library(QuakeToIREE
+  QuakeToIree.cpp
 
   LINK_LIBS PUBLIC
-    MLIRArithDialect
-    MLIRTensorDialect
-    MLIRFuncDialect
-    MLIRTransforms
     MLIRIR
+    MLIRPass
+    MLIRTransforms
+    MLIRArithDialect
+    MLIRFuncDialect
+    MLIRTensorDialect
+    QuakeDialect
 )
+
+add_dependencies(QuakeToIREE QuakeDialect)

@@ -1,11 +1,36 @@
-# ============================================================================ #
-# Copyright (c) 2022 - 2025 NVIDIA Corporation & Affiliates.                   #
-# All rights reserved.                                                         #
-#                                                                              #
-# This source code and the accompanying materials are made available under     #
-# the terms of the Apache License 2.0 which accompanies this distribution.     #
-# ============================================================================ #
+set(LLVM_TARGET_DEFINITIONS QuakeOps.td)
+mlir_tablegen(QuakeOps.h.inc -gen-op-decls)
+mlir_tablegen(QuakeOps.cpp.inc -gen-op-defs)
+add_public_tablegen_target(QuakeOpsIncGen)
 
-add_cudaq_dialect(Quake quake)
-add_cudaq_interface(QuakeInterfaces)
-add_cudaq_dialect_doc(QuakeDialect quake)
+set(LLVM_TARGET_DEFINITIONS QuakeTypes.td)
+mlir_tablegen(QuakeTypes.h.inc -gen-typedef-decls)
+mlir_tablegen(QuakeTypes.cpp.inc -gen-typedef-defs)
+add_public_tablegen_target(QuakeTypesIncGen)
+
+set(LLVM_TARGET_DEFINITIONS QuakeInterfaces.td)
+mlir_tablegen(QuakeInterfaces.h.inc -gen-op-interface-decls)
+mlir_tablegen(QuakeInterfaces.cpp.inc -gen-op-interface-defs)
+add_public_tablegen_target(QuakeInterfacesIncGen)
+
+set(LLVM_TARGET_DEFINITIONS QuakeDialect.td)
+mlir_tablegen(QuakeDialect.h.inc -gen-dialect-decls)
+mlir_tablegen(QuakeDialect.cpp.inc -gen-dialect-defs)
+add_public_tablegen_target(QuakeDialectIncGen)
+
+add_mlir_dialect_library(QuakeDialect
+  QuakeDialect.cpp
+  QuakeOps.cpp
+  QuakeTypes.cpp
+  QuakeInterfaces.cpp
+
+  DEPENDS
+    QuakeOpsIncGen
+    QuakeTypesIncGen
+    QuakeInterfacesIncGen
+    QuakeDialectIncGen
+
+  LINK_LIBS PUBLIC
+    MLIRIR
+    MLIRSupport
+)

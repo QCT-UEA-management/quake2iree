@@ -32,21 +32,5 @@ add_subdirectory(Transforms)
 add_subdirectory(test)
 add_subdirectory(tools)
 
-# ----------------------------------------------
-# Build the main tool quake2iree-opt
-add_executable(quake2iree-opt tools/quake2iree-opt.cpp)
-
-target_link_libraries(quake2iree-opt
-  PRIVATE
-    QuakeToIREE
-    QuakeDialect
-    MLIRArithDialect
-    MLIRFuncDialect
-    MLIRTensorDialect
-    MLIRIR
-    MLIRPass
-    MLIRParser
-    MLIRSupport
-)
 
 mlir_check_all_link_libraries(quake2iree-opt)

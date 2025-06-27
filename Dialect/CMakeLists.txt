@@ -1,12 +1,4 @@
-find_package(MLIR REQUIRED CONFIG)
 
-add_mlir_dialect_library(MyConversion
-  MyPass.cpp
-
-  LINK_LIBS PUBLIC
-    MLIRArithDialect
-    MLIRTensorDialect
-    MLIRFuncDialect
-    MLIRTransforms
-    MLIRIR
-)
+add_subdirectory(Quake)
+add_subdirectory(CC)
+add_subdirectory(Common)
