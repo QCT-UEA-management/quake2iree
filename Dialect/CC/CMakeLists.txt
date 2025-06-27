@@ -1,3 +1,10 @@
+include_directories(
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/..
+  ${CMAKE_CURRENT_SOURCE_DIR}/../Common
+  ${CMAKE_CURRENT_SOURCE_DIR}/../CC
+)
+
 set(LLVM_TARGET_DEFINITIONS CCOps.td)
 mlir_tablegen(CCOps.h.inc -gen-op-decls)
 mlir_tablegen(CCOps.cpp.inc -gen-op-defs)

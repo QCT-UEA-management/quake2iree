@@ -1,3 +1,10 @@
+include_directories(
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/..
+  ${CMAKE_CURRENT_SOURCE_DIR}/../Common
+  ${CMAKE_CURRENT_SOURCE_DIR}/../CC
+)
+
 set(LLVM_TARGET_DEFINITIONS QuakeOps.td)
 mlir_tablegen(QuakeOps.h.inc -gen-op-decls)
 mlir_tablegen(QuakeOps.cpp.inc -gen-op-defs)
