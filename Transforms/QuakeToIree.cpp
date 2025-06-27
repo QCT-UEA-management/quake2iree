@@ -108,3 +108,16 @@ struct ConvertQuakeToIREEPass
 std::unique_ptr<Pass> createConvertQuakeToIREEPass() {
   return std::make_unique<ConvertQuakeToIREEPass>();
 }
+
+
+namespace mlir {
+namespace quake {
+
+void registerQuakeToIREEPass() {
+  ::mlir::PassRegistration<ConvertQuakeToIREEPass>(
+      "convert-quake-to-iree",
+      "Lower Quake dialect operations to IREE-compatible standard dialects");
+}
+
+} // namespace quake
+} // namespace mlir

@@ -21,6 +21,22 @@ This is the current status of the implementations for the core rules and structu
 | Legal operation enforcement | ✅ Yes              | ✅ Fully matched |
 
 
+
+## Requirements
+
+
+### 🧰 Required Tools
+
+To build and run this project, you'll need a few essential tools:
+
+- **LLVM and MLIR**: These provide the core infrastructure for defining dialects, IR, and transformation passes.
+- **CMake (version 3.13 or higher)**: Required as the build system.
+- **Ninja** (optional): A faster alternative to traditional build systems like `make`.
+- **Python 3**: Used to run the test harness (`run_test.py`).
+- **IREE tools** (`iree-compile`, `iree-run-module`): Required to compile the transformed MLIR into executable formats and run them for validation.
+
+
+
 ## Build 
 
 mkdir build 
@@ -30,3 +46,4 @@ cd build
 cmake -G Ninja ..
 
 ninga
+
