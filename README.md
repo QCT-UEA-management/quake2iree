@@ -1,5 +1,11 @@
 # quake2iree
 
+
+## Purpose and Scope
+
+The quake2iree repository implements an MLIR dialect conversion system that transforms quantum programs written in the Quake dialect into IREE-compatible classical MLIR representations. This enables quantum algorithms to be executed on classical hardware through the IREE runtime system.
+
+
 ## Current Implementation 
 
 The current implementation of the quake2iree conversion pass targets simple cases and adheres closely to the official guidelines provided in the MLIR Dialect Conversion framework documentation:
