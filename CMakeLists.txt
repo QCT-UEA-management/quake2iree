@@ -19,6 +19,7 @@ message(STATUS "Found LLVM: ${LLVM_PACKAGE_DIR}")
 
 include(AddMLIR)
 include(AddLLVM)
+include(TableGen)
 
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})

@@ -1,4 +1,4 @@
-/****************************************************************-*- C++ -*-****
+/********************************************************** -*- tablegen -*- ***
  * Copyright (c) 2022 - 2025 NVIDIA Corporation & Affiliates.                  *
  * All rights reserved.                                                        *
  *                                                                             *
@@ -6,12 +6,13 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#pragma once
+#ifndef CUDAQ_OPTIMIZER_DIALECT_CC_IR_INTERFACES
+#define CUDAQ_OPTIMIZER_DIALECT_CC_IR_INTERFACES
 
-#include "mlir/IR/Dialect.h"
+include "mlir/IR/OpBase.td"
 
-//===----------------------------------------------------------------------===//
-// Generated logic
-//===----------------------------------------------------------------------===//
+def LinearTypeArgsTrait : NativeOpTrait<"LinearTypeArgsTrait"> {
+  let cppNamespace = "::cudaq::cc";
+}
 
-#include "Dialect/Quake/QuakeDialect.h.inc"
+#endif // CUDAQ_OPTIMIZER_DIALECT_CC_IR_INTERFACES

@@ -9,12 +9,25 @@
 #pragma once
 
 #include "Dialect/Common/InlinerInterface.h"
-#include "mlir/IR/OpDefinition.h"
 
-using QuakeInlinerInterface = cudaq::EnableInlinerInterface;
+using CCInlinerInterface = cudaq::EnableInlinerInterface;
+
+namespace cudaq::cc {
+
+mlir::LogicalResult verifyConvergentLinearTypesInRegions(mlir::Operation *op);
+
+template <typename ConcreteType>
+class LinearTypeArgsTrait
+    : public mlir::OpTrait::TraitBase<ConcreteType, LinearTypeArgsTrait> {
+public:
+  static mlir::LogicalResult verifyRegionTrait(mlir::Operation *op) {
+    return verifyConvergentLinearTypesInRegions(op);
+  }
+};
+} // namespace cudaq::cc
 
 //===----------------------------------------------------------------------===//
 // Generated logic
 //===----------------------------------------------------------------------===//
 
-#include "Dialect/Quake/QuakeInterfaces.h.inc"
+#include "Dialect/CC/CCInterfaces.h.inc"

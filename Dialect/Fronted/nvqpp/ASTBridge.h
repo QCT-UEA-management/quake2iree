@@ -9,8 +9,8 @@
 #pragma once
 
 #include "Dialect/Frontend/nvqpp/AttributeNames.h"
-#include "cudaq/Optimizer/Builder/Runtime.h"
-#include "cudaq/Optimizer/Dialect/CC/CCOps.h"
+#include "Builder/Runtime.h"
+#include "Dialect/CC/CCOps.h"
 #include "cudaq/Todo.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/GlobalDecl.h"

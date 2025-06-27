@@ -18,11 +18,15 @@ mlir_tablegen(QuakeDialect.h.inc -gen-dialect-decls)
 mlir_tablegen(QuakeDialect.cpp.inc -gen-dialect-defs)
 add_public_tablegen_target(QuakeDialectIncGen)
 
+# Header-only MLIR dialect library
 add_mlir_dialect_library(QuakeDialect
-  QuakeDialect.cpp
-  QuakeOps.cpp
-  QuakeTypes.cpp
-  QuakeInterfaces.cpp
+
+  # You don't have any .cpp sources, just public headers
+  QuakeDialect.cpp  # dummy .cpp files will make CMake happy
+  QuakeDialect.h
+  QuakeOps.h
+  QuakeTypes.h
+  QuakeInterfaces.h
 
   DEPENDS
     QuakeOpsIncGen

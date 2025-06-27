@@ -1,5 +1,6 @@
 add_mlir_library(QuakeCommon
   InlinerInterface.h
+  Traits.h
 
   DEPENDS
     MLIRIR
