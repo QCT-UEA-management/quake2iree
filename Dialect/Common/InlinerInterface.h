@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "Dialect/Frontend/nvqpp/AttributeNames.h"
+#include "Dialect/Common/AttributeNames.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Region.h"
