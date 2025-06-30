@@ -43,13 +43,29 @@ To build and run this project, you'll need a few essential tools:
 
 
 
-## Build 
+## 🚧 Build Instructions
 
-mkdir build 
-
+```
+mkdir build
 cd build
-
 cmake -G Ninja ..
+ninja
+```
 
-ninga
+
+## 🐳 Develop in a Docker Container 
+
+Create image and container:
+
+```
+docker build -t mlir-dev .
+docker run -it --name quake2iree_dev -v "$(pwd)":/app mlir-dev /bin/bash
+```
+
+Reuse the container:
+
+```
+docker start quake2iree_dev
+docker exec -it quake2iree_dev bash
+```
 
