@@ -36,8 +36,12 @@ RUN ninja -j2 install
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-  build-essential cmake git vim python3 python3-pip \
+  build-essential cmake git vim python3 python3-pip ninja-build \
+  libedit-dev libxml2-dev zlib1g-dev libncurses5-dev libzstd-dev \
   && rm -rf /var/lib/apt/lists/*
+
+# Set working directory for dev
+WORKDIR /app
 
 COPY --from=builder /opt/llvm-install /usr/local
 ENV PATH=/usr/local/bin:$PATH

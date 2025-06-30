@@ -5,12 +5,13 @@ project(CheckMLIRDialects)
 set(CMAKE_CXX_STANDARD 17)
 
 # Set your LLVM and MLIR install directory here
-set(LLVM_DIR "/usr/local/opt/llvm/lib/cmake/llvm")
-set(MLIR_DIR "/usr/local/opt/llvm/lib/cmake/mlir")
+set(LLVM_DIR "/usr/local/lib/cmake/llvm")
+set(MLIR_DIR "/usr/local/lib/cmake/mlir")
 
 # Ensure CMake can find LLVM and MLIR modules
 list(APPEND CMAKE_MODULE_PATH "${MLIR_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_DIR}")
+
 
 find_package(MLIR REQUIRED CONFIG)
 find_package(LLVM REQUIRED CONFIG)
