@@ -53,3 +53,17 @@ cmake -G Ninja ..
 
 ninga
 
+
+## Develop in a container 
+
+Create a container:
+
+docker run -it --name quake2iree_dev -v "$(pwd)":/app mlir-dev /bin/bash
+
+
+You can reuse the container:
+
+docker start quake2iree_dev
+
+
+docker exec -it quake2iree_dev bash
