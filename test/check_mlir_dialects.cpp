@@ -8,9 +8,11 @@
 
 int main() {
   mlir::DialectRegistry registry;
+
+
   registry.insert<mlir::func::FuncDialect,
                   mlir::scf::SCFDialect,
-                  mlir::affine::AffineDialect>();
+                  mlir::AffineDialect>();
 
   mlir::MLIRContext context;
   context.appendDialectRegistry(registry);
