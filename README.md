@@ -1,20 +1,16 @@
 # quake2iree
 
-
 ## Purpose and Scope
 
 The quake2iree repository implements an MLIR dialect conversion system that transforms quantum programs written in the Quake dialect into IREE-compatible classical MLIR representations. This enables quantum algorithms to be executed on classical hardware through the IREE runtime system.
 
-
-## Current Implementation 
+## Current Implementation
 
 The current implementation of the quake2iree conversion pass targets simple cases and adheres closely to the official guidelines provided in the MLIR Dialect Conversion framework documentation:
 
-https://mlir.llvm.org/docs/DialectConversion/
+<https://mlir.llvm.org/docs/DialectConversion/>
 
-
-This is the current status of the implementations for the core rules and structure of the MLIR DialectConversion framework. 
-
+This is the current status of the implementations for the core rules and structure of the MLIR DialectConversion framework.
 
 | Feature                     | Status              | Matched to Docs |
 | --------------------------- | ------------------- | --------------- |
@@ -26,10 +22,7 @@ This is the current status of the implementations for the core rules and structu
 | Recursive legality          | ❌ Not needed (yet) | ✅ Optional      |
 | Legal operation enforcement | ✅ Yes              | ✅ Fully matched |
 
-
-
 ## Requirements
-
 
 ### 🧰 Required Tools
 
@@ -41,8 +34,6 @@ To build and run this project, you'll need a few essential tools:
 - **Python 3**: Used to run the test harness (`run_test.py`).
 - **IREE tools** (`iree-compile`, `iree-run-module`): Required to compile the transformed MLIR into executable formats and run them for validation.
 
-
-
 ## 🚧 Build Instructions
 
 ```
@@ -52,8 +43,7 @@ cmake -G Ninja ..
 ninja
 ```
 
-
-## 🐳 Develop in a Docker Container 
+## 🐳 Develop in a Docker Container
 
 Create image and container:
 
@@ -69,3 +59,25 @@ docker start quake2iree_dev
 docker exec -it quake2iree_dev bash
 ```
 
+## Comments about devcontainer
+
+I had to install lld in order install CUDA-Q
+
+```
+apt install lld
+```
+
+Besides it was necessary to set the environment and use few processes
+to avoid problems with memory
+
+```
+export CUDAQ_BUILD_TESTS=FALSE
+export CUDAQ_REQUIRE_OPENMP=FALSE
+bash /workspaces/cuda-quantum/scripts/build_cudaq.sh -j 2
+```
+
+After installation it is possible to use some tools from CUDA-Q
+
+```
+export PATH="/usr/local/cudaq/bin:$PATH"
+```

@@ -47,11 +47,40 @@ include(AddLLVM)
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 
 
-# ----------------------------------------------
+
+
+# ###################### CUDAQ settings ###################################
+if(NOT CUDAQ_SOURCE_DIR AND EXISTS "/usr/local/cudaq")
+  set(CUDAQ_SOURCE_DIR "/usr/local/cudaq")
+endif()
+
+set(CUDAQ_MAIN_INCLUDE_DIR "${CUDAQ_SOURCE_DIR}/include")
+
+# Updated from /build/... to top-level paths
+set(CUDAQ_LIBRARY_DIR "${CUDAQ_SOURCE_DIR}/lib")
+set(CUDAQ_INCLUDE_DIR "${CUDAQ_SOURCE_DIR}/include")
+set(CUDAQ_TOOLS_DIR "${CUDAQ_SOURCE_DIR}/bin")
+set(CUDAQ_MLIR_RUNTIME_PATH "${CUDAQ_SOURCE_DIR}/lib")
+
+include_directories(BEFORE ${CUDAQ_MAIN_INCLUDE_DIR}
+                    ${CUDAQ_INCLUDE_DIR} ${CUDAQ_SOURCE_DIR}/runtime)
+
+# Validate CUDAQ dependencies (corrected path)
+if(NOT EXISTS ${CUDAQ_LIBRARY_DIR}/libcudaq-mlir-runtime.so)
+  message(
+    FATAL_ERROR
+      "Invalid CUDAQ dir: ${CUDAQ_SOURCE_DIR}. Cannot find libcudaq-mlir-runtime.so in lib directory."
+  )
+endif()
+
+
+############################################
+
+
+
 # Add your dialect, transforms, and tests
 add_subdirectory(Dialect)
 add_subdirectory(Conversion)
 #add_subdirectory(test)
-
 
 mlir_check_all_link_libraries(quake_to_standard-opt)
