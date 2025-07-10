@@ -50,7 +50,7 @@ include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 # Add your dialect, transforms, and tests
 add_subdirectory(Dialect)
 add_subdirectory(Conversion)
-#add_subdirectory(tool)
+add_subdirectory(tool)
 
 #add_subdirectory(test)
 

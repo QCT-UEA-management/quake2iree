@@ -44,6 +44,7 @@ add_mlir_dialect_library(QuakeDialect
   QuakeTypes.cpp
   Factory.cpp
   Intrinsics.cpp
+  Factory.h
 
   DEPENDS
     QuakeOpsIncGen
