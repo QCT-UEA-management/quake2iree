@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "Dialect/Support/SmallVector.h"
+#include "Dialect/Quake/SmallVector.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"

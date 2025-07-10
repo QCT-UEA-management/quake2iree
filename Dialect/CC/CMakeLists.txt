@@ -37,10 +37,8 @@ add_public_tablegen_target(CCDialectIncGen)
 # Dummy source file (you need to create this)
 add_mlir_dialect_library(CCDialect
   CCDialect.cpp  # <-- create this minimal file
-
-  CCDialect.h
-  CCOps.h
-  CCTypes.h
+  CCOps.cpp
+  CCTypes.cpp
   CCInterfaces.h
 
   DEPENDS

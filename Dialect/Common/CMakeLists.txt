@@ -9,6 +9,7 @@ include_directories(
 add_mlir_library(QuakeCommon
   QuakeCommon.cpp
   InlinerInterface.h
+  AttributeNames.h
   Traits.h
   Traits.td
 

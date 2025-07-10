@@ -18,7 +18,6 @@ def QuakeToStandard : Pass<"quake-to-standard", "mlir::ModuleOp"> {
     "mlir::func::FuncDialect",
     "mlir::tensor::TensorDialect",
     "mlir::scf::SCFDialect",
-    //"mlir::memref::MemRefDialect",
     "quake::QuakeDialect",
   ];
 }

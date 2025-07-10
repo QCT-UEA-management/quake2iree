@@ -14,15 +14,14 @@ set(DIALECT_TD_INCLUDE_DIRS
   -I ${CMAKE_CURRENT_SOURCE_DIR}/../CC
 )
 
-
 set(LLVM_TARGET_DEFINITIONS QuakeOps.td)
 mlir_tablegen(QuakeOps.h.inc -gen-op-decls ${DIALECT_TD_INCLUDE_DIRS})
 mlir_tablegen(QuakeOps.cpp.inc -gen-op-defs ${DIALECT_TD_INCLUDE_DIRS})
 add_public_tablegen_target(QuakeOpsIncGen)
 
 set(LLVM_TARGET_DEFINITIONS QuakeTypes.td)
-mlir_tablegen(QuakeTypes.h.inc -gen-typedef-decls ${DIALECT_TD_INCLUDE_DIRS})
-mlir_tablegen(QuakeTypes.cpp.inc -gen-typedef-defs ${DIALECT_TD_INCLUDE_DIRS})
+mlir_tablegen(QuakeTypes.h.inc -gen-typedef-decls -typedefs-dialect=quake ${DIALECT_TD_INCLUDE_DIRS})
+mlir_tablegen(QuakeTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=quake ${DIALECT_TD_INCLUDE_DIRS})
 add_public_tablegen_target(QuakeTypesIncGen)
 
 set(LLVM_TARGET_DEFINITIONS QuakeInterfaces.td)
@@ -35,14 +34,15 @@ mlir_tablegen(QuakeDialect.h.inc -gen-dialect-decls ${DIALECT_TD_INCLUDE_DIRS})
 mlir_tablegen(QuakeDialect.cpp.inc -gen-dialect-defs ${DIALECT_TD_INCLUDE_DIRS})
 add_public_tablegen_target(QuakeDialectIncGen)
 
+
 # Header-only MLIR dialect library
 add_mlir_dialect_library(QuakeDialect
-
-  QuakeDialect.cpp  # dummy .cpp files will make CMake happy
-  QuakeDialect.h
-  QuakeOps.h
-  QuakeTypes.h
-  QuakeInterfaces.h
+  QuakeDialect.cpp 
+  QuakeInterfaces.cpp 
+  QuakeOps.cpp
+  QuakeTypes.cpp
+  Factory.cpp
+  Intrinsics.cpp
 
   DEPENDS
     QuakeOpsIncGen

@@ -24,17 +24,19 @@ namespace quake_to_standard {
 class QuakeToStandardTypeConverter : public TypeConverter {
 public:
   QuakeToStandardTypeConverter(MLIRContext *ctx) {
+    // Identity conversion for unknown types.
     addConversion([](Type type) { return type; });
 
+    // Convert quake.ref -> tensor<i1>
     addConversion([ctx](quake::RefType) -> Type {
       return RankedTensorType::get({}, IntegerType::get(ctx, 1));
     });
 
-    addConversion([ctx](quake::VeqType type) -> Type {
-      int64_t size = type.getSize();
-      return RankedTensorType::get(
-          {size >= 0 ? size : ShapedType::kDynamic},
-          IntegerType::get(ctx, 1));
+    // Convert quake.veq<?> -> tensor<?xi1>
+    addConversion([ctx](quake::VeqType) -> Type {
+      // We assume dynamic shape to avoid needing getSize()
+      return RankedTensorType::get({ShapedType::kDynamic},
+                                   IntegerType::get(ctx, 1));
     });
   }
 };
@@ -55,6 +57,7 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
     if (!tensorTy)
       return rewriter.notifyMatchFailure(op, "Expected RankedTensorType");
 
+    // Static shape: just create a tensor.empty
     if (tensorTy.hasStaticShape()) {
       Value empty = rewriter.create<tensor::EmptyOp>(
           loc, tensorTy.getShape(), tensorTy.getElementType());
@@ -62,11 +65,11 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
       return success();
     }
 
-    // Dynamic shape case (e.g., quake.veq<?>)
-    if (!op.getSize())
+    // Dynamic shape case
+    if (op.getNumOperands() < 1)
       return rewriter.notifyMatchFailure(op, "Missing dynamic size operand");
 
-    Value sizeVal = op.getSize();
+    Value sizeVal = op.getOperand(0);
     Value castSize = rewriter.create<arith::IndexCastOp>(
         loc, rewriter.getIndexType(), sizeVal);
     SmallVector<Value> dynamicDims{castSize};
@@ -98,6 +101,7 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
 
     populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
         patterns, typeConverter);
+
     target.addDynamicallyLegalOp<func::FuncOp>(
         [&](func::FuncOp op) {
           return typeConverter.isSignatureLegal(op.getFunctionType()) &&
@@ -111,3 +115,9 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
 
 } // namespace quake_to_standard
 } // namespace mlir
+
+namespace quake {
+void registerQuakeToStandardPass() {
+  mlir::quake_to_standard::registerQuakeToStandardPass();
+}
+}
