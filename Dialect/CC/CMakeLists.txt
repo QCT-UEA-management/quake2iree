@@ -39,7 +39,6 @@ add_mlir_dialect_library(CCDialect
   CCDialect.cpp  # <-- create this minimal file
   CCOps.cpp
   CCTypes.cpp
-  CCInterfaces.h
 
   DEPENDS
     CCOpsIncGen

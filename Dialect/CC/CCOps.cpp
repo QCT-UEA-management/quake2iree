@@ -7,7 +7,7 @@
  ******************************************************************************/
 
 #include "Dialect/CC/CCOps.h"
-#include "Builder/Factory.h"
+#include "Dialect/Quake/Factory.h"
 #include "Dialect/CC/CCDialect.h"
 #include "Dialect/Quake/QuakeOps.h"
 #include "llvm/ADT/TypeSwitch.h"

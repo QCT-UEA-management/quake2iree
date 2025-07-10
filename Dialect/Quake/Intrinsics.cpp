@@ -7,8 +7,8 @@
  ******************************************************************************/
 
 #include "Dialect/Quake/Intrinsics.h"
-#include "Builder/Runtime.h"
-#include "CodeGen/CudaqFunctionNames.h"
+#include "Dialect/Quake/Runtime.h"
+#include "Dialect/Quake/CudaqFunctionNames.h"
 #include "Dialect/CC/CCOps.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"

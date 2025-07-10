@@ -34,6 +34,7 @@ mlir_tablegen(QuakeDialect.h.inc -gen-dialect-decls ${DIALECT_TD_INCLUDE_DIRS})
 mlir_tablegen(QuakeDialect.cpp.inc -gen-dialect-defs ${DIALECT_TD_INCLUDE_DIRS})
 add_public_tablegen_target(QuakeDialectIncGen)
 
+#add_dependencies(QuakeDialect CCInterfacesIncGen)
 
 # Header-only MLIR dialect library
 add_mlir_dialect_library(QuakeDialect
@@ -49,6 +50,7 @@ add_mlir_dialect_library(QuakeDialect
     QuakeTypesIncGen
     QuakeInterfacesIncGen
     QuakeDialectIncGen
+    CCInterfacesIncGen
 
   LINK_LIBS PUBLIC
     MLIRIR

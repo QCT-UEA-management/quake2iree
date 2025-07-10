@@ -7,9 +7,9 @@
  ******************************************************************************/
 
 #include "Dialect/Quake/Intrinsics.h"
-#include "Builder/Runtime.h"
-#include "CodeGen/QIRFunctionNames.h"
-#include "CodeGen/QIROpaqueStructTypes.h"
+#include "Dialect/Quake/Runtime.h"
+#include "Dialect/Quake/QIRFunctionNames.h"
+#include "Dialect/Quake/QIROpaqueStructTypes.h"
 #include "Dialect/CC/CCOps.h"
 #include "Dialect/Quake/QuakeOps.h"
 #include "llvm/TargetParser/Host.h"

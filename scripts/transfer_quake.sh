@@ -31,8 +31,10 @@ cp "$CUDAQ_DIR/include/cudaq/Optimizer/Builder/"*.h "$QUAKE_DIR"
 cp "$CUDAQ_DIR/include/cudaq/Optimizer/CodeGen/"QIRFunctionNames.h "$QUAKE_DIR"
 cp "$CUDAQ_DIR/include/cudaq/Optimizer/CodeGen/"QIROpaqueStructTypes.h "$QUAKE_DIR"
 
+ls "$CUDAQ_DIR/include/cudaq/Optimizer/CodeGen/CudaqFunctionNames.h"
+cp "$CUDAQ_DIR/include/cudaq/Optimizer/CodeGen/CudaqFunctionNames.h" "$QUAKE_DIR"
+cp "$CUDAQ_DIR/include/cudaq/Support/SmallVector.h" "$QUAKE_DIR"
 
-#rm -f "$QUAKE_DIR/Intrinsics."*
 rm -f "$QUAKE_DIR/Marshal."*
 
 
@@ -52,15 +54,12 @@ cp "$CUDAQ_DIR/include/cudaq/Optimizer/Dialect/Common/"*.h "$COMMON_DIR"
 cp "$CUDAQ_DIR/include/cudaq/Optimizer/Dialect/Common/"*.td "$COMMON_DIR"
 
 
-cp "$CUDAQ_DIR/include/cudaq/Optimizer/Dialect/Common/"*.h "$COMMON_DIR"
-
-cp "$CUDAQ_DIR/include/cudaq/Support/SmallVector.h" "$QUAKE_DIR"
-
+# Other 
 
 bash modify_paths.h
 
-echo "✅ Transfer complete."
-echo "✅ Transformation of paths completed."
+echo " Transfer complete."
+echo " Transformation of paths completed."
 
 
 

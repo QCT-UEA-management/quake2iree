@@ -11,6 +11,7 @@ set -e
 
 
 QUAKE_DIR="../Dialect/Quake"
+COMMON_DIR="../Dialect/Common"
 CC_DIR="../Dialect/CC"
 
 
@@ -45,21 +46,23 @@ REPLACEMENT_STRING='#include "Dialect/Common/AttributeNames.h"'
 find "$TARGET_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
 
 
-# Specific changes
+# Define the target and replacement
 TARGET_STRING='#include "cudaq/Support/SmallVector.h"'
 REPLACEMENT_STRING='#include "Dialect/Quake/SmallVector.h"'
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
 
-# Specific changes
-TARGET_STRING='#include "cudaq/Support/SmallVector.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/SmallVector.h"'
-find "$CC_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+# Apply to both directories
+find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) \
+    -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+
+find "$CC_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) \
+    -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
 
 
 # Specific changes
 TARGET_STRING='#include "Builder/Factory.h"'
 REPLACEMENT_STRING='#include "Dialect/Quake/Factory.h"'
 find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+find "$CC_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
 
 # Specific changes
 TARGET_STRING='#include "Builder/Intrinsics.h"'
@@ -69,6 +72,25 @@ find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -ex
 TARGET_STRING='#include "Builder/Runtime.h"'
 REPLACEMENT_STRING='#include "Dialect/Quake/Runtime.h"'
 find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+
+TARGET_STRING='#include "CodeGen/CudaqFunctionNames.h"'
+REPLACEMENT_STRING='#include "Dialect/Quake/CudaqFunctionNames.h"'
+find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+
+
+TARGET_STRING='#include "cudaq/Frontend/nvqpp/AttributeNames.h"'
+REPLACEMENT_STRING='#include "Dialect/Common/AttributeNames.h"'
+find "$COMMON_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+
+
+TARGET_STRING='#include "CodeGen/QIRFunctionNames.h"'
+REPLACEMENT_STRING='#include "Dialect/Quake/QIRFunctionNames.h"'
+find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+
+TARGET_STRING='#include "CodeGen/QIROpaqueStructTypes.h"'
+REPLACEMENT_STRING='#include "Dialect/Quake/QIROpaqueStructTypes.h"'
+find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+
 
 
 echo "All matching includes transformed successfully."
