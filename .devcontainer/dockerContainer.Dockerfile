@@ -1,55 +1,48 @@
-# [Operating System]
-ARG base_image=ubuntu:22.04
+FROM ubuntu:24.04 AS builder
 
-# [CUDA-Q Dependencies]
-FROM ${base_image} AS prereqs
-SHELL ["/bin/bash", "-c"]
-ARG toolchain=gcc11
-
-# When a dialogue box would be needed during install, assume default configurations.
-# Set here to avoid setting it for all install commands.
-# Given as arg to make sure that this value is only set during build but not in the launched container.
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
-    apt-get autoremove -y --purge && apt-get clean && rm -rf /var/lib/apt/lists/*
+ENV TZ=UTC
 
-## [Prerequisites]
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && \
-    apt-get autoremove -y --purge && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-## [Environment Variables]
-ENV CUDAQ_INSTALL_PREFIX=/usr/local/cudaq
-ENV CUQUANTUM_INSTALL_PREFIX=/usr/local/cuquantum
-ENV CUTENSOR_INSTALL_PREFIX=/usr/local/cutensor
-ENV LLVM_INSTALL_PREFIX=/usr/local/llvm
-ENV BLAS_INSTALL_PREFIX=/usr/local/blas
-ENV ZLIB_INSTALL_PREFIX=/usr/local/zlib
-ENV OPENSSL_INSTALL_PREFIX=/usr/local/openssl
-ENV CURL_INSTALL_PREFIX=/usr/local/curl
-ENV AWS_INSTALL_PREFIX=/usr/local/aws
-
-## [Build Dependencies]
+# Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        wget git unzip \
-        python3-dev python3-pip && \
-    python3 -m pip install --no-cache-dir numpy && \
-    apt-get autoremove -y --purge && apt-get clean && rm -rf /var/lib/apt/lists/*
+  build-essential cmake git vim ninja-build \
+  python3 python3-pip \
+  libjemalloc-dev tzdata \
+  libedit-dev libxml2-dev zlib1g-dev libncurses5-dev libzstd-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && \
-    apt-get install -y \
-    build-essential \
-    libz3-dev \
-    openssh-client \
-    libgtest-dev \
-    pkg-config \
-    bison \
-    flex \
-    libboost-program-options-dev \
-    libzip-dev && \
-    # Clean up cache to reduce image size
-    rm -rf /var/lib/apt/lists/*
+# Clone LLVM
+WORKDIR /opt
+# RUN git clone --depth 1 https://github.com/llvm/llvm-project.git
+RUN git clone --branch llvmorg-16.0.6 --depth 1 https://github.com/llvm/llvm-project.git
 
-RUN git config --global gc.auto 0
-RUN git clone https://github.com/NVIDIA/cuda-quantum.git /workspaces/cuda-quantum
-RUN LLVM_PROJECTS="clang;lld;mlir;python-bindings;runtimes;compiler-rt" bash /workspaces/cuda-quantum/scripts/install_prerequisites.sh -t clang16
-RUN rm -rf /root/.llvm-project
+# Configure
+WORKDIR /opt/llvm-project/build
+RUN cmake -G Ninja ../llvm \
+  -DLLVM_ENABLE_PROJECTS="mlir" \
+  -DLLVM_TARGETS_TO_BUILD="X86" \
+  -DLLVM_PARALLEL_COMPILE_JOBS=2 \
+  -DLLVM_PARALLEL_LINK_JOBS=2 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DLLVM_ENABLE_ASSERTIONS=ON \
+  -DLLVM_BUILD_EXAMPLES=OFF \
+  -DLLVM_INSTALL_UTILS=ON \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  -DCMAKE_INSTALL_PREFIX=/opt/llvm-install
+
+# Build and install
+RUN ninja -j2 install
+
+# Final image
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  build-essential cmake git vim python3 python3-pip ninja-build \
+  libedit-dev libxml2-dev zlib1g-dev libncurses5-dev libzstd-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+# Set working directory for dev
+WORKDIR /workspace
+
+COPY --from=builder /opt/llvm-install /usr/local
+ENV PATH=/usr/local/bin:$PATH

@@ -1,23 +1,11 @@
 {
   "name": "passes-dev",
   "build": {
-    "dockerfile": "dockerContainer.Dockerfile",
-    "args": {
-      "destination": "workspaces/passes"
-    }
+    "dockerfile": "dockerContainer.Dockerfile"
   },
-  // If you do not have the NVIDIA container runtime installed, available GPUs will not be automatically detected.
-  // You can manually pass the flag to enable GPU support to docker by uncommenting the line below.
-  // "runArgs": [ "--gpus=all" ],
   "hostRequirements": {
     "gpu": "optional"
   },
-  // To use certain debugging tools, you may want uncomment the two lines below.
-  // Be mindful of security implications when you do. See also
-  // - https://github.com/rr-debugger/rr/wiki/Docker
-  // - https://www.cybereason.com/blog/container-escape-all-you-need-is-cap-capabilities
-  // "capAdd": ["SYS_PTRACE"],
-  // "securityOpt": [ "seccomp=unconfined" ],
   "customizations": {
     "vscode": {
       "extensions": [
@@ -58,20 +46,13 @@
           "editor.formatOnPaste": true,
           "files.trimTrailingWhitespace": true
         },
-        "cSpell.userWords": [
-          "MLIR",
-          "LLVM",
-          "bitcode",
-          "Quake",
-          "QTX",
-          "CUDA",
-          "cuQuantum",
-          "qubit",
-          "qubits"
-        ],
         "[python]": {
           "editor.formatOnType": true
         },
+        "cSpell.userWords": [
+          "MLIR", "LLVM", "bitcode", "Quake", "QTX",
+          "CUDA", "cuQuantum", "qubit", "qubits"
+        ],
         "psi-header.config": {
           "forceToTop": false,
           "blankLinesAfter": 1,
@@ -85,22 +66,11 @@
           "enforceHeader": false,
           "autoHeader": "autoSave",
           "include": [
-            "cpp",
-            "c",
-            "tablegen",
-            "mlir",
-            "rust",
-            "python",
-            "cuda-cpp",
-            "cmake",
-            "makefile",
-            "perl",
-            "shellscript",
-            "dockerfile",
-            "css"
+            "cpp", "c", "tablegen", "mlir", "rust",
+            "python", "cuda-cpp", "cmake", "makefile",
+            "perl", "shellscript", "dockerfile", "css"
           ],
           "replace": ["Copyright (c)", "File", "Last Modified"],
-          // needs to be true to replace license related information
           "updateLicenseVariables": false
         },
         "psi-header.lang-config": [
@@ -115,20 +85,16 @@
             "ignoreLines": ["#!"]
           },
           {
-            "language": "perl",
-            "mapTo": "shellscript"
+            "language": "perl", "mapTo": "shellscript"
           },
           {
-            "language": "dockerfile",
-            "mapTo": "shellscript"
+            "language": "dockerfile", "mapTo": "shellscript"
           },
           {
-            "language": "cmake",
-            "mapTo": "shellscript"
+            "language": "cmake", "mapTo": "shellscript"
           },
           {
-            "language": "makefile",
-            "mapTo": "shellscript"
+            "language": "makefile", "mapTo": "shellscript"
           },
           {
             "language": "python",
@@ -137,8 +103,7 @@
             "prefix": "# ",
             "suffix": " #",
             "lineLength": 80,
-            "end": "# ============================================================================ #",
-            "ignoreLines": []
+            "end": "# ============================================================================ #"
           },
           {
             "language": "rust",
@@ -147,12 +112,10 @@
             "prefix": " * ",
             "suffix": " *",
             "lineLength": 80,
-            "end": " ******************************************************************************/",
-            "ignoreLines": []
+            "end": " ******************************************************************************/"
           },
           {
-            "language": "css",
-            "mapTo": "rust"
+            "language": "css", "mapTo": "rust"
           },
           {
             "language": "c",
@@ -161,8 +124,7 @@
             "prefix": " * ",
             "suffix": " *",
             "lineLength": 80,
-            "end": " ******************************************************************************/",
-            "ignoreLines": []
+            "end": " ******************************************************************************/"
           },
           {
             "language": ".h",
@@ -171,8 +133,7 @@
             "prefix": " * ",
             "suffix": " *",
             "lineLength": 80,
-            "end": " ******************************************************************************/",
-            "ignoreLines": []
+            "end": " ******************************************************************************/"
           },
           {
             "language": "cpp",
@@ -181,12 +142,10 @@
             "prefix": " * ",
             "suffix": " *",
             "lineLength": 80,
-            "end": " ******************************************************************************/",
-            "ignoreLines": []
+            "end": " ******************************************************************************/"
           },
           {
-            "language": "cuda-cpp",
-            "mapTo": "cpp"
+            "language": "cuda-cpp", "mapTo": "cpp"
           },
           {
             "language": "tablegen",
@@ -195,8 +154,7 @@
             "prefix": " * ",
             "suffix": " *",
             "lineLength": 80,
-            "end": " ******************************************************************************/",
-            "ignoreLines": []
+            "end": " ******************************************************************************/"
           },
           {
             "language": "mlir",
@@ -205,8 +163,7 @@
             "prefix": "// ",
             "suffix": " //",
             "lineLength": 80,
-            "end": "// ========================================================================== //",
-            "ignoreLines": []
+            "end": "// ========================================================================== //"
           },
           {
             "language": "*",

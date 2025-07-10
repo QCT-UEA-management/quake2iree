@@ -6,26 +6,10 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
-#include "Dialect/Quake/QuakeDialect.h"
-#include "Dialect/Quake/QuakeOps.h"
-#include "Dialect/Quake/QuakeTypes.h"
-#include "mlir/IR/DialectImplementation.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
+#include "Dialect/Quake/QuakeInterfaces.h"
 
 //===----------------------------------------------------------------------===//
 // Generated logic
 //===----------------------------------------------------------------------===//
 
-#include "Dialect/Quake/QuakeDialect.cpp.inc"
-
-//===----------------------------------------------------------------------===//
-
-void quake::QuakeDialect::initialize() {
-  registerTypes();
-  addOperations<
-#define GET_OP_LIST
-#include "Dialect/Quake/QuakeOps.cpp.inc"
-      >();
-  addInterfaces<QuakeInlinerInterface>();
-}
+#include "Dialect/Quake/QuakeInterfaces.cpp.inc"

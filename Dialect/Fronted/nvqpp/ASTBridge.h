@@ -28,7 +28,7 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/InitAllDialects.h"
 
-namespace cudaq::details {
+namespace details {
 /// Report a clang error diagnostic. Note that the message must be a string
 /// literal. \p astNode is a node from the clang AST with source location
 /// information.
@@ -43,7 +43,7 @@ void reportClangError(T *astNode, clang::ItaniumMangleContext *mangler,
                       const char (&msg)[N]) {
   reportClangError(astNode, mangler->getASTContext().getDiagnostics(), msg);
 }
-} // namespace cudaq::details
+} // namespace details
 
 #undef TODO_BRIDGE
 #undef TODO_x
@@ -51,7 +51,7 @@ void reportClangError(T *astNode, clang::ItaniumMangleContext *mangler,
 #if defined(NDEBUG) || defined(CUDAQ_NOTRACEBACKS)
 #define TODO_BRIDGE(MlirLoc, ToDoXPtr, ToDoMangler, ToDoMsg, ToDoFile,         \
                     ToDoLine)                                                  \
-  cudaq::details::reportClangError(ToDoXPtr, ToDoMangler,                      \
+  details::reportClangError(ToDoXPtr, ToDoMangler,                      \
                                    ToDoMsg " is not yet supported");
 #else
 #define TODO_BRIDGE(MlirLoc, ToDoXPtr, ToDoMangler, ToDoMsg, ToDoFile,         \
@@ -60,7 +60,7 @@ void reportClangError(T *astNode, clang::ItaniumMangleContext *mangler,
     mlir::emitError(MlirLoc, llvm::Twine(ToDoFile ":" TODOQUOTE(               \
                                  ToDoLine) ": not yet implemented: ") +        \
                                  ToDoMsg);                                     \
-    cudaq::details::reportClangError(ToDoXPtr, ToDoMangler,                    \
+    details::reportClangError(ToDoXPtr, ToDoMangler,                    \
                                      ToDoMsg " is not yet supported");         \
   } while (false);
 #endif
@@ -164,7 +164,7 @@ public:
   /// to identify the kernel class from which the function was extracted.
   std::string generateCudaqKernelName(const clang::FunctionDecl *func) {
     return getCudaqKernelName(
-        cudaq::details::getTagNameOfFunctionDecl(func, mangler));
+        details::getTagNameOfFunctionDecl(func, mangler));
   }
   std::string generateCudaqKernelName(const EmittedFunctionPair &emittedFunc) {
     if (emittedFunc.first.starts_with(runtime::cudaqGenPrefixName))
@@ -448,8 +448,8 @@ public:
   /// type. Otherwise, just returns \p val.
   mlir::Value loadLValue(mlir::Value val) {
     auto valTy = val.getType();
-    if (valTy.isa<cudaq::cc::PointerType>())
-      return builder.create<cudaq::cc::LoadOp>(val.getLoc(), val);
+    if (valTy.isa<cc::PointerType>())
+      return builder.create<cc::LoadOp>(val.getLoc(), val);
     if (valTy.isa<mlir::LLVM::LLVMPointerType>())
       return builder.create<mlir::LLVM::LoadOp>(val.getLoc(), val);
     return val;
@@ -650,7 +650,7 @@ private:
 /// In short, this Action generates the MLIR Module.
 class ASTBridgeAction : public clang::ASTFrontendAction {
 public:
-  using MangledKernelNamesMap = cudaq::MangledKernelNamesMap;
+  using MangledKernelNamesMap = MangledKernelNamesMap;
 
   /// Constructor.
   ASTBridgeAction(mlir::OwningOpRef<mlir::ModuleOp> &_module,

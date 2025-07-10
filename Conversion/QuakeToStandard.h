@@ -17,4 +17,10 @@ namespace quake_to_standard {
 }  // namespace quake_to_standard
 }  // namespace mlir
 
+
+// ✅ Add this declaration so q2i-opt.cpp can call it
+namespace quake {
+  void registerQuakeToStandardPass();
+}
+
 #endif  // CONVERSION_QUAKETOSTANDARD_H_

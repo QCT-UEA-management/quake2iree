@@ -13,7 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Clone LLVM
 WORKDIR /opt
-RUN git clone --depth 1 https://github.com/llvm/llvm-project.git
+# RUN git clone --depth 1 https://github.com/llvm/llvm-project.git
+RUN git clone --branch llvmorg-16.0.6 --depth 1 https://github.com/llvm/llvm-project.git
 
 # Configure
 WORKDIR /opt/llvm-project/build
@@ -41,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # Set working directory for dev
-WORKDIR /app
+WORKDIR /workspace
 
 COPY --from=builder /opt/llvm-install /usr/local
 ENV PATH=/usr/local/bin:$PATH
