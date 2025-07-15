@@ -19,8 +19,7 @@ target_link_libraries(q2i-opt
   MLIRDialect
   MLIRFuncDialect
   MLIRArithDialect
-  #MLIRSCFDialect
   MLIRTensorDialect
   MLIRMlirOptMain
-  
+  MLIRIR
 )

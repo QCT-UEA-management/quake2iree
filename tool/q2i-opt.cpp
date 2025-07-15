@@ -3,7 +3,9 @@
 #include "Dialect/CC/CCDialect.h"
 
 #include "mlir/InitAllPasses.h"
+#include "mlir/InitAllDialects.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+#include "mlir/IR/MLIRContext.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -18,16 +20,32 @@ int main(int argc, char **argv) {
 
   //  Register only the dialects you actually need
   registry.insert<
-    arith::ArithDialect,
-    func::FuncDialect,
-    tensor::TensorDialect,
+    //func::FuncDialect,
+    //tensor::TensorDialect,
     quake::QuakeDialect,
     cudaq::cc::CCDialect
   >();
 
-  //  Register core + custom passes
-  //registerAllPasses();                    // Optional — only needed if you want standard MLIR passes
+  registerAllDialects(registry);
+  registerAllPasses();                    // Optional — only needed if you want standard MLIR passes
   quake::registerQuakeToStandardPass();  // Your custom pass
+
+
+  // Register a CLI pipeline option like --quake-to-standard
+  /*
+  PassPipelineRegistration<> pipeline(
+    "quake-to-standard",
+    "Lower Quake dialect to standard dialects",
+    quakeToStandardPipeline
+  );
+  */
+
+  // Register all the dialects with MLIRContext
+  MLIRContext context;
+  context.appendDialectRegistry(registry);
+  context.loadAllAvailableDialects();  // <-- this is critical
+
+  
 
   return asMainReturnCode(
     MlirOptMain(argc, argv, "Quake optimizer\n", registry));

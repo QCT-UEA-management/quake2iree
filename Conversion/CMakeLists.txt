@@ -19,6 +19,7 @@ add_mlir_library(QuakeToStandard
 
   LINK_LIBS PUBLIC
   QuakeDialect
+  CCDialect
   MLIRArithDialect
   MLIRFuncDialect
   MLIRFuncTransforms

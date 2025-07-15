@@ -20,35 +20,31 @@ namespace quake_to_standard {
 #define GEN_PASS_DEF_QUAKETOSTANDARD
 #include "Conversion/QuakeToStandard.h.inc"
 
-/// Type converter for Quake types -> Tensor types
+/// Type converter for Quake types → Tensor types
 class QuakeToStandardTypeConverter : public TypeConverter {
 public:
   QuakeToStandardTypeConverter(MLIRContext *ctx) {
-    // Identity conversion for unknown types.
     addConversion([](Type type) { return type; });
 
-    // Convert quake.ref -> tensor<i1>
     addConversion([ctx](quake::RefType) -> Type {
       return RankedTensorType::get({}, IntegerType::get(ctx, 1));
     });
 
-    // Convert quake.veq<?> -> tensor<?xi1>
     addConversion([ctx](quake::VeqType) -> Type {
-      // We assume dynamic shape to avoid needing getSize()
       return RankedTensorType::get({ShapedType::kDynamic},
                                    IntegerType::get(ctx, 1));
     });
   }
 };
 
-/// Pattern to convert quake.alloca → tensor.empty
+/// Pattern to convert `quake.alloca` → `tensor.empty`
 struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
   using OpConversionPattern::OpConversionPattern;
 
   LogicalResult matchAndRewrite(quake::AllocaOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Type origType = op.getResult().getType();
+    Type origType = op.getType();  // $ref_or_vec
     Type convertedType = getTypeConverter()->convertType(origType);
     if (!convertedType)
       return rewriter.notifyMatchFailure(op, "Failed to convert result type");
@@ -57,7 +53,7 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
     if (!tensorTy)
       return rewriter.notifyMatchFailure(op, "Expected RankedTensorType");
 
-    // Static shape: just create a tensor.empty
+    // Static shape
     if (tensorTy.hasStaticShape()) {
       Value empty = rewriter.create<tensor::EmptyOp>(
           loc, tensorTy.getShape(), tensorTy.getElementType());
@@ -65,11 +61,11 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
       return success();
     }
 
-    // Dynamic shape case
-    if (op.getNumOperands() < 1)
+    // Dynamic shape
+    Value sizeVal = op.getSize();
+    if (!sizeVal)
       return rewriter.notifyMatchFailure(op, "Missing dynamic size operand");
 
-    Value sizeVal = op.getOperand(0);
     Value castSize = rewriter.create<arith::IndexCastOp>(
         loc, rewriter.getIndexType(), sizeVal);
     SmallVector<Value> dynamicDims{castSize};
@@ -81,7 +77,7 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
   }
 };
 
-/// Main conversion pass driver
+/// Conversion pass driver
 struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
   using QuakeToStandardBase::QuakeToStandardBase;
 
