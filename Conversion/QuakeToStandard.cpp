@@ -30,9 +30,9 @@ public:
       return RankedTensorType::get({}, IntegerType::get(ctx, 1));
     });
 
-    addConversion([ctx](quake::VeqType) -> Type {
-      return RankedTensorType::get({ShapedType::kDynamic},
-                                   IntegerType::get(ctx, 1));
+    addConversion([ctx](quake::VeqType t) -> Type {
+      int64_t size = t.hasSpecifiedSize() ? t.getSize() : ShapedType::kDynamic;
+      return RankedTensorType::get({size}, IntegerType::get(ctx, 1));
     });
   }
 };
@@ -44,7 +44,7 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
   LogicalResult matchAndRewrite(quake::AllocaOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    Type origType = op.getType();  // $ref_or_vec
+    Type origType = op.getType();  // !quake.veq<?>, !quake.veq<2>, etc.
     Type convertedType = getTypeConverter()->convertType(origType);
     if (!convertedType)
       return rewriter.notifyMatchFailure(op, "Failed to convert result type");
@@ -53,7 +53,7 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
     if (!tensorTy)
       return rewriter.notifyMatchFailure(op, "Expected RankedTensorType");
 
-    // Static shape
+    // Static shape case
     if (tensorTy.hasStaticShape()) {
       Value empty = rewriter.create<tensor::EmptyOp>(
           loc, tensorTy.getShape(), tensorTy.getElementType());
@@ -63,8 +63,18 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
 
     // Dynamic shape
     Value sizeVal = op.getSize();
-    if (!sizeVal)
-      return rewriter.notifyMatchFailure(op, "Missing dynamic size operand");
+
+    // If no explicit size operand, try extracting from the type
+    if (!sizeVal) {
+      if (auto veqTy = llvm::dyn_cast<quake::VeqType>(origType)) {
+        if (veqTy.hasSpecifiedSize()) {
+          int64_t size = veqTy.getSize();
+          sizeVal = rewriter.create<arith::ConstantIndexOp>(loc, size);
+        } else {
+          return rewriter.notifyMatchFailure(op, "Dynamic veq with no size operand");
+        }
+      }
+    }
 
     Value castSize = rewriter.create<arith::IndexCastOp>(
         loc, rewriter.getIndexType(), sizeVal);
@@ -85,15 +95,15 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
     MLIRContext *context = &getContext();
     Operation *module = getOperation();
 
+    QuakeToStandardTypeConverter typeConverter(context);
+    RewritePatternSet patterns(context);
+    patterns.add<ConvertAlloca>(typeConverter, context);
+
     ConversionTarget target(*context);
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
     target.addIllegalDialect<quake::QuakeDialect>();
-
-    QuakeToStandardTypeConverter typeConverter(context);
-    RewritePatternSet patterns(context);
-    patterns.add<ConvertAlloca>(typeConverter, context);
 
     populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
         patterns, typeConverter);
