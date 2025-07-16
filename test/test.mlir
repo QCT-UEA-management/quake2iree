@@ -1,6 +1,6 @@
 module {
   func.func @main() {
-    %q = quake.alloca : !quake.veq<2>
+    %0 = quake.alloca !quake.veq<2>
     return
   }
 }
