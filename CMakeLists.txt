@@ -26,10 +26,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 # ################ MLIR Settings ###########################################
-# Find MLIR. (MLIR is usually installed as part of an LLVM distribution.)
-if(NOT MLIR_DIR AND EXISTS "/usr/local/llvm/lib/cmake/mlir")
-  set(MLIR_DIR "/usr/local/llvm/lib/cmake/mlir")
-endif()
+# Find MLIR
 
 find_package(MLIR REQUIRED CONFIG)
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")

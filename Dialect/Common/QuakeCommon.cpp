@@ -1,2 +1,4 @@
-// QuakeCommon.cpp
-// Empty source to satisfy CMake's requirement.
+#include "Dialect/Common/InlinerInterface.h"
+#include "Dialect/Common/AttributeNames.h"
+#include "Dialect/Common/Traits.h"
+

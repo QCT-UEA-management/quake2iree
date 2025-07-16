@@ -1,13 +1,13 @@
 
 include_directories(
   ${CMAKE_CURRENT_BINARY_DIR}
-  ${PROJECT_BINARY_DIR}                # <--- ADD THIS
+  ${PROJECT_BINARY_DIR}                
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${PROJECT_SOURCE_DIR}
 )
 
 set(DIALECT_TD_INCLUDE_DIRS
-  -I ${PROJECT_SOURCE_DIR}  # ← this is the key path!
+  -I ${PROJECT_SOURCE_DIR} 
   -I ${CMAKE_CURRENT_SOURCE_DIR}
   -I ${CMAKE_CURRENT_SOURCE_DIR}/..
   -I ${CMAKE_CURRENT_SOURCE_DIR}/../Common
@@ -44,7 +44,9 @@ add_mlir_dialect_library(QuakeDialect
   QuakeTypes.cpp
   Factory.cpp
   Intrinsics.cpp
-  Factory.h
+
+  ADDITIONAL_HEADER_DIRS
+    ${PROJECT_SOURCE_DIR}/Dialect/Quake
 
   DEPENDS
     QuakeOpsIncGen
@@ -52,6 +54,8 @@ add_mlir_dialect_library(QuakeDialect
     QuakeInterfacesIncGen
     QuakeDialectIncGen
     CCInterfacesIncGen
+    CommonTraitsIncGen
+    QuakeCommon
 
   LINK_LIBS PUBLIC
     MLIRIR

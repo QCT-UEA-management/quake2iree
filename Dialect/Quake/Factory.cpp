@@ -6,6 +6,7 @@
  * the terms of the Apache License 2.0 which accompanies this distribution.    *
  ******************************************************************************/
 
+#include "Dialect/Quake/Factory.h"  // ADD THIS
 #include "Dialect/Quake/Intrinsics.h"
 #include "Dialect/Quake/Runtime.h"
 #include "Dialect/Quake/QIRFunctionNames.h"

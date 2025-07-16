@@ -40,11 +40,17 @@ add_mlir_dialect_library(CCDialect
   CCOps.cpp
   CCTypes.cpp
 
+  ADDITIONAL_HEADER_DIRS
+    ${PROJECT_SOURCE_DIR}/Dialect/CC
+
   DEPENDS
     CCOpsIncGen
     CCTypesIncGen
     CCInterfacesIncGen
     CCDialectIncGen
+    QuakeInterfacesIncGen
+
+  
 
   LINK_LIBS PUBLIC
     MLIRIR

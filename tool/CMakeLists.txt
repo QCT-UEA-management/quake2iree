@@ -5,13 +5,12 @@ include_directories(
   ${PROJECT_SOURCE_DIR}
 )
 
-add_executable(q2i-opt q2i-opt.cpp)
 
-target_link_libraries(q2i-opt
-  PRIVATE
+set (LIBS
   CCDialect     
   QuakeDialect         # <== Your dialect
   QuakeToStandard      # <== Your pass  
+  QuakeCommon
   MLIRSupport
   MLIRParser
   MLIRPass
@@ -23,3 +22,18 @@ target_link_libraries(q2i-opt
   MLIRMlirOptMain
   MLIRIR
 )
+
+
+add_llvm_executable(q2i-opt q2i-opt.cpp)
+
+llvm_update_compile_flags(q2i-opt)
+
+target_link_libraries(q2i-opt PRIVATE ${LIBS})
+
+target_sources(q2i-opt PRIVATE
+  ${PROJECT_SOURCE_DIR}/Dialect/Quake/QuakeDialect.cpp
+)
+
+mlir_check_all_link_libraries(q2i-opt)
+
+

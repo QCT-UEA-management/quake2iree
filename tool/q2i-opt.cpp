@@ -1,3 +1,6 @@
+#include "mlir/IR/Dialect.h"
+#include "llvm/Support/raw_ostream.h"
+
 #include "Conversion/QuakeToStandard.h"
 #include "Dialect/Quake/QuakeDialect.h"
 #include "Dialect/CC/CCDialect.h"
@@ -10,7 +13,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-//#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 
 using namespace mlir;
@@ -18,35 +21,37 @@ using namespace mlir;
 int main(int argc, char **argv) {
   DialectRegistry registry;
 
-  //  Register only the dialects you actually need
+  // 1) Register *exactly* the dialects you need—including Quake—and any std ones
   registry.insert<
-    //func::FuncDialect,
-    //tensor::TensorDialect,
+    arith::ArithDialect,
+    func::FuncDialect,
+    scf::SCFDialect,
+    tensor::TensorDialect,
     quake::QuakeDialect,
     cudaq::cc::CCDialect
   >();
 
-  registerAllDialects(registry);
+
+  //registerAllDialects(registry);
   registerAllPasses();                    // Optional — only needed if you want standard MLIR passes
   quake::registerQuakeToStandardPass();  // Your custom pass
 
-
-  // Register a CLI pipeline option like --quake-to-standard
-  /*
-  PassPipelineRegistration<> pipeline(
-    "quake-to-standard",
-    "Lower Quake dialect to standard dialects",
-    quakeToStandardPipeline
-  );
-  */
-
   // Register all the dialects with MLIRContext
+  // Create the context with *that* registry
   MLIRContext context;
   context.appendDialectRegistry(registry);
-  context.loadAllAvailableDialects();  // <-- this is critical
+  context.loadAllAvailableDialects();  
 
+
+  // Now check: can we *load* the Quake dialect?
+  if (auto *qd = context.getOrLoadDialect<quake::QuakeDialect>())
+    llvm::errs() << "✅ quake::QuakeDialect is present!\n";
+  else
+    llvm::errs() << "❌ quake::QuakeDialect *NOT* present.\n";
   
 
+ 
+
   return asMainReturnCode(
-    MlirOptMain(argc, argv, "Quake optimizer\n", registry));
+    MlirOptMain(argc, argv, "Quake→Standard converter\n", registry));
 }
