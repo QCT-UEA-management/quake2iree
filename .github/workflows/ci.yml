@@ -1,0 +1,32 @@
+name: MLIR CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: marhvera/llvm-dev:latest  # ← your prebuilt image
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake -G Ninja ..
+
+      - name: Build project
+        run: |
+          cd build
+          ninja -j4
+
+      - name: Make test script executable
+        run: chmod +x test/run_q2i_opt.sh
+
+      - name: Run MLIR conversion test via Python
+        run: python3 test/test_mlir_conversion.py
