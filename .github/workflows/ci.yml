@@ -29,4 +29,6 @@ jobs:
         run: chmod +x test/run_q2i_opt.sh
 
       - name: Run MLIR conversion test via Python
-        run: python3 test/test_mlir_conversion.py
+        run: |
+          cd test
+          python3 test_mlir_conversion.py

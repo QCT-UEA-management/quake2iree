@@ -5,9 +5,8 @@ import subprocess
 import sys
 
 def main():
-    input_file = "test.mlir"
     output_file = "output.mlir"
-    script = ".run_q2i_opt.sh"
+    script = "./run_q2i_opt.sh"
 
     # Clean up previous output
     if os.path.exists(output_file):
@@ -15,7 +14,7 @@ def main():
 
     # Run conversion
     result = subprocess.run(
-        [script, input_file, output_file],
+        [script],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True
