@@ -12,6 +12,8 @@ set(CMAKE_CXX_FLAGS "-w -fPIC")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-switch")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
+set(STABLEHLO_BUILD_EMBEDDED ON)
+
 # Set default build type to Debug if none is specified
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE
@@ -48,6 +50,7 @@ include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
 add_subdirectory(Dialect)
 add_subdirectory(Conversion)
 add_subdirectory(tool)
+add_subdirectory(stablehlo)
 
 #add_subdirectory(test)
 
