@@ -39,6 +39,7 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
   build-essential cmake git vim python3 python3-pip ninja-build \
   libedit-dev libxml2-dev zlib1g-dev libncurses5-dev libzstd-dev \
+  clang-16 \
   && rm -rf /var/lib/apt/lists/*
 
 # Set working directory for dev
