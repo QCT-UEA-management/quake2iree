@@ -87,6 +87,20 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
   }
 };
 
+
+/// Pattern to erase `quake.dealloc`
+struct ConvertDealloc : public OpConversionPattern<quake::DeallocOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(quake::DeallocOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    rewriter.eraseOp(op);  // Quake dealloc becomes no-op in tensor dialect
+    return success();
+  }
+};
+
+
+
 /// Conversion pass driver
 struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
   using QuakeToStandardBase::QuakeToStandardBase;
@@ -97,7 +111,7 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
 
     QuakeToStandardTypeConverter typeConverter(context);
     RewritePatternSet patterns(context);
-    patterns.add<ConvertAlloca>(typeConverter, context);
+    patterns.add<ConvertAlloca, ConvertDealloc>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<arith::ArithDialect>();
@@ -121,6 +135,8 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
 
 } // namespace quake_to_standard
 } // namespace mlir
+
+
 
 namespace quake {
 void registerQuakeToStandardPass() {

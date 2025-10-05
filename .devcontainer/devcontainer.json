@@ -1,11 +1,7 @@
 {
   "name": "passes-dev",
-
   // PULL FROM DOCKER HUB:
   "image": "marhvera/llvm-dev:latest",
-  //"build": {
-  //  "dockerfile": "dockerContainer.Dockerfile"
-  //},
   "hostRequirements": {
     "gpu": "optional"
   },
