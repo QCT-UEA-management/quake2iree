@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: marhvera/llvm-dev:latest  # ← your prebuilt image
+      image: marhvera/llvm-dev:latest
     steps:
       - uses: actions/checkout@v4
 
@@ -25,8 +25,8 @@ jobs:
           cd build
           ninja -j4
 
-      - name: Make test script executable
-        run: chmod +x test/run_q2i_opt.sh
+      - name: Make library executable
+        run: chmod +x build/tool/q2i-opt
 
       - name: Run MLIR conversion test via Python
         run: |

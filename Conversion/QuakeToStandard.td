@@ -17,6 +17,7 @@ def QuakeToStandard : Pass<"quake-to-standard", "mlir::ModuleOp"> {
     "mlir::arith::ArithDialect",
     "mlir::func::FuncDialect",
     "mlir::tensor::TensorDialect",
+    "mlir::complex::ComplexDialect",
     "mlir::scf::SCFDialect",
     "quake::QuakeDialect",
   ];
