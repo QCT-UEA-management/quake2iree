@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 
@@ -27,6 +28,7 @@ int main(int argc, char **argv) {
     func::FuncDialect,
     scf::SCFDialect,
     tensor::TensorDialect,
+    complex::ComplexDialect,
     quake::QuakeDialect,
     cudaq::cc::CCDialect
   >();

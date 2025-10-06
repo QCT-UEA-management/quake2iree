@@ -10,6 +10,7 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -88,13 +89,86 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
 };
 
 
-/// Pattern to erase `quake.dealloc`
-struct ConvertDealloc : public OpConversionPattern<quake::DeallocOp> {
+/// Pattern to convert `quake.veq_size` → `tensor.dim`.
+struct ConvertVeqSize : public OpConversionPattern<quake::VeqSizeOp> {
   using OpConversionPattern::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(quake::DeallocOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(quake::VeqSizeOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    rewriter.eraseOp(op);  // Quake dealloc becomes no-op in tensor dialect
+    auto loc = op.getLoc();
+    Value veq = adaptor.getVeq();
+    auto tensorTy = llvm::dyn_cast<RankedTensorType>(veq.getType());
+    if (!tensorTy || tensorTy.getRank() != 1)
+      return rewriter.notifyMatchFailure(op, "expected 1D tensor for veq");
+
+    Value dim = rewriter.create<tensor::DimOp>(loc, veq, 0);
+    rewriter.replaceOp(op, dim);
+    return success();
+  }
+};
+
+
+/// Pattern to convert `quake.init_state` (InitializeStateOp)
+/// → `func.call @__quake_init_state_f32/_f64`.
+///
+/// Semantics:
+/// - Takes a vector of qubits (`!quake.veq`) and a state tensor (`tensor<?xcomplex<f32/f64>>`)
+/// - Calls a runtime helper to initialize the qubits with the provided amplitudes.
+/// - Returns the same qubit tensor as the initialized result (RAII semantics).
+struct ConvertInitState : public OpConversionPattern<quake::InitializeStateOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(quake::InitializeStateOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+
+    // Operands after type conversion
+    Value targets = adaptor.getTargets(); // tensor<?xi1> or tensor<Nxi1>
+    Value state   = adaptor.getState();   // tensor<?xcomplex<fx>>
+
+    // Verify operand types.
+    auto qT = dyn_cast<RankedTensorType>(targets.getType());
+    auto sT = dyn_cast<RankedTensorType>(state.getType());
+    if (!qT || qT.getRank() != 1 || !qT.getElementType().isInteger(1))
+      return rewriter.notifyMatchFailure(op, "expected 1D tensor<i1> for qubits");
+    if (!sT || sT.getRank() != 1)
+      return rewriter.notifyMatchFailure(op, "expected 1D tensor for state");
+
+    // Validate complex element type.
+    Type elemTy = sT.getElementType();
+    auto complexTy = dyn_cast<ComplexType>(elemTy);
+    if (!complexTy)
+      return rewriter.notifyMatchFailure(op, "state must have complex element type");
+
+    Type floatTy = complexTy.getElementType();
+    bool isF32 = floatTy.isF32();
+    bool isF64 = floatTy.isF64();
+    if (!isF32 && !isF64)
+      return rewriter.notifyMatchFailure(op, "complex element must be f32 or f64");
+
+    // Ensure runtime function declaration exists.
+    MLIRContext *ctx = rewriter.getContext();
+    auto funcTy = FunctionType::get(ctx, {qT, sT}, {});
+    StringRef calleeName = isF32 ? "__quake_init_state_f32" : "__quake_init_state_f64";
+
+    // Insert declaration if missing.
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    SymbolTable symTab(module);
+    if (!symTab.lookup(calleeName)) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(module.getBody());
+      auto decl = rewriter.create<func::FuncOp>(loc, calleeName, funcTy);
+      decl.setPrivate(); // internal linkage
+    }
+
+    // Emit runtime call.
+    rewriter.create<func::CallOp>(
+        loc, calleeName, TypeRange{}, ValueRange{targets, state});
+
+    // Replace the original op with the same (initialized) qubit tensor.
+    // Quake semantics: init_state returns a new !quake.veq, but the resource is reused.
+    rewriter.replaceOp(op, targets);
+
     return success();
   }
 };
@@ -111,12 +185,15 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
 
     QuakeToStandardTypeConverter typeConverter(context);
     RewritePatternSet patterns(context);
-    patterns.add<ConvertAlloca, ConvertDealloc>(typeConverter, context);
+    patterns.add<ConvertAlloca>(typeConverter, context);
+    patterns.add<ConvertVeqSize>(typeConverter, context);
+    patterns.add<ConvertInitState>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
+    target.addLegalDialect<complex::ComplexDialect>();
     target.addIllegalDialect<quake::QuakeDialect>();
 
     populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
@@ -135,8 +212,6 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
 
 } // namespace quake_to_standard
 } // namespace mlir
-
-
 
 namespace quake {
 void registerQuakeToStandardPass() {
