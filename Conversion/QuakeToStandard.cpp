@@ -2,6 +2,9 @@
 #include "Dialect/Quake/QuakeDialect.h"
 #include "Dialect/Quake/QuakeOps.h"
 #include "Dialect/Quake/QuakeTypes.h"
+#include "Dialect/CC/CCDialect.h"
+#include "Dialect/CC/CCOps.h"
+#include "Dialect/CC/CCTypes.h"
 
 #include "llvm/ADT/SmallVector.h"
 
@@ -37,6 +40,22 @@ public:
     });
   }
 };
+
+
+/// Pattern to convert `quake.dealloc` → erased (no-op in Standard MLIR)
+struct ConvertDealloc : public OpConversionPattern<quake::DeallocOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(quake::DeallocOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    // In Quake, dealloc is used to release quantum memory (qubits),
+    // but in Standard MLIR, tensors are value types, so there’s no explicit free.
+    // We simply remove the operation.
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 
 /// Pattern to convert `quake.alloca` → `tensor.empty`
 struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
@@ -108,72 +127,6 @@ struct ConvertVeqSize : public OpConversionPattern<quake::VeqSizeOp> {
 };
 
 
-/// Pattern to convert `quake.init_state` (InitializeStateOp)
-/// → `func.call @__quake_init_state_f32/_f64`.
-///
-/// Semantics:
-/// - Takes a vector of qubits (`!quake.veq`) and a state tensor (`tensor<?xcomplex<f32/f64>>`)
-/// - Calls a runtime helper to initialize the qubits with the provided amplitudes.
-/// - Returns the same qubit tensor as the initialized result (RAII semantics).
-struct ConvertInitState : public OpConversionPattern<quake::InitializeStateOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(quake::InitializeStateOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-
-    // Operands after type conversion
-    Value targets = adaptor.getTargets(); // tensor<?xi1> or tensor<Nxi1>
-    Value state   = adaptor.getState();   // tensor<?xcomplex<fx>>
-
-    // Verify operand types.
-    auto qT = dyn_cast<RankedTensorType>(targets.getType());
-    auto sT = dyn_cast<RankedTensorType>(state.getType());
-    if (!qT || qT.getRank() != 1 || !qT.getElementType().isInteger(1))
-      return rewriter.notifyMatchFailure(op, "expected 1D tensor<i1> for qubits");
-    if (!sT || sT.getRank() != 1)
-      return rewriter.notifyMatchFailure(op, "expected 1D tensor for state");
-
-    // Validate complex element type.
-    Type elemTy = sT.getElementType();
-    auto complexTy = dyn_cast<ComplexType>(elemTy);
-    if (!complexTy)
-      return rewriter.notifyMatchFailure(op, "state must have complex element type");
-
-    Type floatTy = complexTy.getElementType();
-    bool isF32 = floatTy.isF32();
-    bool isF64 = floatTy.isF64();
-    if (!isF32 && !isF64)
-      return rewriter.notifyMatchFailure(op, "complex element must be f32 or f64");
-
-    // Ensure runtime function declaration exists.
-    MLIRContext *ctx = rewriter.getContext();
-    auto funcTy = FunctionType::get(ctx, {qT, sT}, {});
-    StringRef calleeName = isF32 ? "__quake_init_state_f32" : "__quake_init_state_f64";
-
-    // Insert declaration if missing.
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    SymbolTable symTab(module);
-    if (!symTab.lookup(calleeName)) {
-      OpBuilder::InsertionGuard guard(rewriter);
-      rewriter.setInsertionPointToStart(module.getBody());
-      auto decl = rewriter.create<func::FuncOp>(loc, calleeName, funcTy);
-      decl.setPrivate(); // internal linkage
-    }
-
-    // Emit runtime call.
-    rewriter.create<func::CallOp>(
-        loc, calleeName, TypeRange{}, ValueRange{targets, state});
-
-    // Replace the original op with the same (initialized) qubit tensor.
-    // Quake semantics: init_state returns a new !quake.veq, but the resource is reused.
-    rewriter.replaceOp(op, targets);
-
-    return success();
-  }
-};
-
-
 
 /// Conversion pass driver
 struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
@@ -185,15 +138,16 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
 
     QuakeToStandardTypeConverter typeConverter(context);
     RewritePatternSet patterns(context);
+    patterns.add<ConvertDealloc>(typeConverter, context);
     patterns.add<ConvertAlloca>(typeConverter, context);
     patterns.add<ConvertVeqSize>(typeConverter, context);
-    patterns.add<ConvertInitState>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<func::FuncDialect>();
     target.addLegalDialect<tensor::TensorDialect>();
     target.addLegalDialect<complex::ComplexDialect>();
+    target.addLegalDialect<cudaq::cc::CCDialect>();
     target.addIllegalDialect<quake::QuakeDialect>();
 
     populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(

@@ -56,27 +56,27 @@ def main():
     q2i_opt_path = test_dir.parent / "build" / "tool" / "q2i-opt"  # adjust if path differs
 
     passed = 0
-    total = 0  
+    num_tests = 0  
 
     # test 1
     test_file = test_dir / "01_quake_alloca.mlir"
-    total += 1
+    num_tests += 1
     if run_test(test_file, q2i_opt_path): passed += 1
 
     # test 2 
     test_file = test_dir / "02_quake_veq_size.mlir"
-    total += 1
+    num_tests += 1
     if run_test(test_file, q2i_opt_path): passed += 1
 
     
     # test 3 
-    #test_file = test_dir / "03_quake_init_state.mlir"
-    #if run_test(test_file, q2i_opt_path):
-    #    passed += 1
+    test_file = test_dir / "03_quake_dealloc.mlir"
+    num_tests += 1
+    if run_test(test_file, q2i_opt_path): passed += 1
+        
 
-
-    print(f"\n ✅ {passed}/{total} tests passed.")
-    if passed != total:
+    print(f"\n ✅ {passed}/{num_tests} tests passed.")
+    if passed != num_tests:
         sys.exit(1)
 
 
