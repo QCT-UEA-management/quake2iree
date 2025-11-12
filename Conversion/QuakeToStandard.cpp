@@ -31,7 +31,8 @@ public:
     addConversion([](Type type) { return type; });
 
     addConversion([ctx](quake::RefType) -> Type {
-      return RankedTensorType::get({}, IntegerType::get(ctx, 1));
+      // Represent a single quantum reference as a length-1 tensor<i1>
+      return RankedTensorType::get({1}, IntegerType::get(ctx, 1));
     });
 
     addConversion([ctx](quake::VeqType t) -> Type {
@@ -107,6 +108,128 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
   }
 };
 
+/// Pattern to convert `quake.concat` → sequence of `tensor.insert_slice`
+/// operations. LLVM 16–compatible fallback (no `tensor.concat`).
+struct ConvertConcat : public OpConversionPattern<quake::ConcatOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(quake::ConcatOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    ValueRange inputs = adaptor.getQbits();
+    if (inputs.empty())
+      return rewriter.notifyMatchFailure(op, "no inputs to concat");
+
+    // Normalize all inputs to rank-1 tensor<i1>.
+    SmallVector<Value> oneDInputs;
+    int64_t totalLen = 0;
+    bool allStatic = true;
+
+    for (Value v : inputs) {
+      auto rtt = dyn_cast<RankedTensorType>(v.getType());
+      if (!rtt || !rtt.getElementType().isInteger(1))
+        return rewriter.notifyMatchFailure(op, "expected tensor<i1> or tensor<?xi1>");
+
+      if (rtt.getRank() == 0) {
+        // Promote tensor<i1> → tensor<1xi1>
+        auto scalar = rewriter.create<tensor::ExtractOp>(loc, v).getResult(); // i1
+        auto oneTy  = RankedTensorType::get({1}, rewriter.getI1Type());
+        Value v1    = rewriter.create<tensor::SplatOp>(loc, oneTy, scalar).getResult();
+        oneDInputs.push_back(v1);
+        totalLen += 1;
+        continue;
+      }
+
+      if (rtt.getRank() == 1) {
+        oneDInputs.push_back(v);
+        if (rtt.isDynamicDim(0))
+          allStatic = false;
+        else
+          totalLen += rtt.getDimSize(0);
+        continue;
+      }
+
+      return rewriter.notifyMatchFailure(op, "unsupported tensor rank for concat");
+    }
+
+    Type elemTy = rewriter.getI1Type();
+
+    // Respect the declared result (!quake.veq<?> means dynamic length).
+    auto quakeResultTy = op.getType().dyn_cast<quake::VeqType>();
+    bool resultDynamic = !quakeResultTy || !quakeResultTy.hasSpecifiedSize();
+
+    // Create the destination tensor (either fully static or 1D dynamic).
+    Value result;
+    if (!resultDynamic && allStatic) {
+      result = rewriter
+                 .create<tensor::EmptyOp>(loc,
+                                          llvm::ArrayRef<int64_t>{totalLen},
+                                          elemTy)
+                 .getResult();
+    } else {
+      // Compute total length dynamically.
+      Value totalSize = rewriter.create<arith::ConstantIndexOp>(loc, 0).getResult();
+      for (Value v : oneDInputs) {
+        auto ty = v.getType().cast<RankedTensorType>();
+        Value lenVal;
+        if (ty.isDynamicDim(0)) {
+          auto dimOp = rewriter.create<tensor::DimOp>(loc, v, 0);
+          lenVal = dimOp.getResult();
+        } else {
+          auto cst = rewriter.create<arith::ConstantIndexOp>(loc, ty.getDimSize(0));
+          lenVal = cst.getResult();
+        }
+        auto add = rewriter.create<arith::AddIOp>(loc, totalSize, lenVal);
+        totalSize = add.getResult();
+      }
+      SmallVector<Value> dynSizes{totalSize};
+      result = rewriter
+                 .create<tensor::EmptyOp>(loc,
+                                          llvm::ArrayRef<int64_t>{ShapedType::kDynamic},
+                                          elemTy, dynSizes)
+                 .getResult();
+    }
+
+    // Insert each slice in order.
+    Value offset = rewriter.create<arith::ConstantIndexOp>(loc, 0).getResult();
+    for (Value v : oneDInputs) {
+      auto ty = v.getType().cast<RankedTensorType>();
+
+      // Build `sizes` as OpFoldResult: Attr for static, Value for dynamic.
+      OpFoldResult lenOfr;
+      Value        lenValForAdd; // for offset update
+
+      if (ty.isDynamicDim(0)) {
+        auto dimOp = rewriter.create<tensor::DimOp>(loc, v, 0);
+        lenValForAdd = dimOp.getResult();
+        lenOfr = lenValForAdd; // dynamic size via SSA
+      } else {
+        int64_t n = ty.getDimSize(0);
+        lenOfr = rewriter.getIndexAttr(n); // static size as attribute
+        lenValForAdd = rewriter.create<arith::ConstantIndexOp>(loc, n).getResult();
+      }
+
+      SmallVector<OpFoldResult> offsets{offset};                   // dynamic offset ok
+      SmallVector<OpFoldResult> sizes{lenOfr};                     // <-- key: attr if static
+      SmallVector<OpFoldResult> strides{rewriter.getIndexAttr(1)}; // static stride=1
+
+      result = rewriter
+                 .create<tensor::InsertSliceOp>(loc, v, result,
+                                                offsets, sizes, strides)
+                 .getResult();
+
+      // offset += len
+      auto add = rewriter.create<arith::AddIOp>(loc, offset, lenValForAdd);
+      offset = add.getResult();
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+
+
 
 /// Pattern to convert `quake.veq_size` → `tensor.dim`.
 struct ConvertVeqSize : public OpConversionPattern<quake::VeqSizeOp> {
@@ -141,6 +264,7 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
     patterns.add<ConvertDealloc>(typeConverter, context);
     patterns.add<ConvertAlloca>(typeConverter, context);
     patterns.add<ConvertVeqSize>(typeConverter, context);
+    patterns.add<ConvertConcat>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<arith::ArithDialect>();
