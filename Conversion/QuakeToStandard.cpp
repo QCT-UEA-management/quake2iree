@@ -256,6 +256,46 @@ struct ConvertVeqSize : public OpConversionPattern<quake::VeqSizeOp> {
 
 
 
+struct ConvertExtractRef : public OpConversionPattern<quake::ExtractRefOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(quake::ExtractRefOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc(); // Captures the operation’s source location
+    Value veqTensor = adaptor.getVeq(); // normalized tensor<?xi1>
+    Value indexVal = adaptor.getIndex(); // dynamic index if provided
+
+    auto veqTy = veqTensor.getType().dyn_cast<RankedTensorType>();
+    if (!veqTy || veqTy.getRank() != 1)
+      return rewriter.notifyMatchFailure(op, "expected rank-1 tensor for veq");
+
+    // Result type: tensor<1xi1>
+    auto elemTy = rewriter.getI1Type();
+    auto oneTy = RankedTensorType::get({1}, elemTy);
+
+    // Compute offset: dynamic if indexVal exists, else static from rawIndex
+    OpFoldResult offset;
+    if (indexVal) {
+      offset = indexVal; // dynamic offset
+    } else {
+      offset = rewriter.getIndexAttr(op.getRawIndex()); // static offset
+    }
+
+    SmallVector<OpFoldResult> offsets{offset};
+    SmallVector<OpFoldResult> sizes{rewriter.getIndexAttr(1)}; // size = 1
+    SmallVector<OpFoldResult> strides{rewriter.getIndexAttr(1)}; // stride = 1
+
+    Value slice = rewriter.create<tensor::ExtractSliceOp>(
+        loc, oneTy, veqTensor, offsets, sizes, strides);
+
+    rewriter.replaceOp(op, slice);
+    return success();
+  }
+};
+
+
+
+
 /// Conversion pass driver
 struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
   using QuakeToStandardBase::QuakeToStandardBase;
@@ -270,6 +310,7 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
     patterns.add<ConvertAlloca>(typeConverter, context);
     patterns.add<ConvertVeqSize>(typeConverter, context);
     patterns.add<ConvertConcat>(typeConverter, context);
+    patterns.add<ConvertExtractRef>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<arith::ArithDialect>();
