@@ -121,25 +121,29 @@ struct ConvertConcat : public OpConversionPattern<quake::ConcatOp> {
       return rewriter.notifyMatchFailure(op, "no inputs to concat");
 
     // Normalize all inputs to rank-1 tensor<i1>.
-    SmallVector<Value> oneDInputs;
+    SmallVector<Value> oneDInputs;  // we need to concatenate tensors, so let's include them in oneDInputs. oneDInputs acts as a **staging area** for normalized tensors
     int64_t totalLen = 0;
     bool allStatic = true;
 
     for (Value v : inputs) {
       auto rtt = dyn_cast<RankedTensorType>(v.getType());
+
+      //Check type and element type
       if (!rtt || !rtt.getElementType().isInteger(1))
         return rewriter.notifyMatchFailure(op, "expected tensor<i1> or tensor<?xi1>");
 
+      // Handle rank-0 tensors (scalar case)
       if (rtt.getRank() == 0) {
         // Promote tensor<i1> → tensor<1xi1>
         auto scalar = rewriter.create<tensor::ExtractOp>(loc, v).getResult(); // i1
-        auto oneTy  = RankedTensorType::get({1}, rewriter.getI1Type());
-        Value v1    = rewriter.create<tensor::SplatOp>(loc, oneTy, scalar).getResult();
-        oneDInputs.push_back(v1);
-        totalLen += 1;
+        auto oneTy  = RankedTensorType::get({1}, rewriter.getI1Type()); // {1} means the shape is [1], so oneTy is tensor<1xi1>.
+        Value v1    = rewriter.create<tensor::SplatOp>(loc, oneTy, scalar).getResult(); // Create a tensor of shape {1} filled with that scalar
+        oneDInputs.push_back(v1);  // Adds the newly created rank-1 tensor to the list of normalized inputs
+        totalLen += 1; // Updates the total static length of the concatenated tensor
         continue;
       }
 
+      // Handle rank-1 tensors
       if (rtt.getRank() == 1) {
         oneDInputs.push_back(v);
         if (rtt.isDynamicDim(0))
@@ -152,20 +156,23 @@ struct ConvertConcat : public OpConversionPattern<quake::ConcatOp> {
       return rewriter.notifyMatchFailure(op, "unsupported tensor rank for concat");
     }
 
-    Type elemTy = rewriter.getI1Type();
+    // Now elemTy will be used as the element type for the result tensor that we are 
+    // about to create. Below we create the destination tensor (using tensor::EmptyOp), 
+    // we must specify: The shape (static or dynamic) and the element type.
+    Type elemTy = rewriter.getI1Type();  
 
-    // Respect the declared result (!quake.veq<?> means dynamic length).
-    auto quakeResultTy = op.getType().dyn_cast<quake::VeqType>();
-    bool resultDynamic = !quakeResultTy || !quakeResultTy.hasSpecifiedSize();
+    // Does the Quake result type specify a fixed size?
+    // If not, treat the result as dynamic.
+    auto quakeResultTy = op.getType().dyn_cast<quake::VeqType>(); // retrieves the result type of the quake.concat operation
+    bool resultDynamic = !quakeResultTy || !quakeResultTy.hasSpecifiedSize(); // determines whether the result length is dynamic
 
     // Create the destination tensor (either fully static or 1D dynamic).
     Value result;
     if (!resultDynamic && allStatic) {
-      result = rewriter
-                 .create<tensor::EmptyOp>(loc,
-                                          llvm::ArrayRef<int64_t>{totalLen},
-                                          elemTy)
-                 .getResult();
+      result = rewriter.create<tensor::EmptyOp>(loc,
+                                                llvm::ArrayRef<int64_t>{totalLen},
+                                                elemTy
+                                                ).getResult();
     } else {
       // Compute total length dynamically.
       Value totalSize = rewriter.create<arith::ConstantIndexOp>(loc, 0).getResult();
@@ -213,8 +220,7 @@ struct ConvertConcat : public OpConversionPattern<quake::ConcatOp> {
       SmallVector<OpFoldResult> sizes{lenOfr};                     // <-- key: attr if static
       SmallVector<OpFoldResult> strides{rewriter.getIndexAttr(1)}; // static stride=1
 
-      result = rewriter
-                 .create<tensor::InsertSliceOp>(loc, v, result,
+      result = rewriter.create<tensor::InsertSliceOp>(loc, v, result,
                                                 offsets, sizes, strides)
                  .getResult();
 
@@ -227,7 +233,6 @@ struct ConvertConcat : public OpConversionPattern<quake::ConcatOp> {
     return success();
   }
 };
-
 
 
 

@@ -4,7 +4,7 @@ module {
     %r2 = quake.alloca  !quake.ref
 
     %v_concat = quake.concat %r1, %r2
-      : (!quake.ref, !quake.ref) -> !quake.veq<?>
+      : (!quake.ref, !quake.ref) -> !quake.veq<2>
 
     func.return
   }
