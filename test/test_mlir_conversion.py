@@ -80,15 +80,18 @@ def main():
     if run_test(test_file, q2i_opt_path): passed += 1
 
     # test 5
-
     test_file = test_dir / "05_quake_extractref.mlir"
+    num_tests += 1
+    if run_test(test_file, q2i_opt_path): passed += 1
+
+    # test 6
+    test_file = test_dir / "06_quake_initializestate.mlir"
     num_tests += 1
     if run_test(test_file, q2i_opt_path): passed += 1
 
     print(f"\n ✅ {passed}/{num_tests} tests passed.")
     if passed != num_tests:
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
