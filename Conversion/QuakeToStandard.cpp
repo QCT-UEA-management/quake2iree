@@ -43,12 +43,6 @@ public:
 };
 
 
-
-
-//===----------------------------------------------------------------------===//
-// Alloca, Dealloc: allocation of quantum references
-//===----------------------------------------------------------------------===//
-
 /// Pattern to convert `quake.dealloc` → erased (no-op in Standard MLIR)
 struct ConvertDealloc : public OpConversionPattern<quake::DeallocOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -114,43 +108,6 @@ struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
   }
 };
 
-/*
-struct ConvertInitState : public OpConversionPattern<quake::InitializeStateOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(quake::InitializeStateOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-
-    Value targets = adaptor.getTargets();
-    Value statePtr = adaptor.getState();
-
-    auto veqTy = targets.getType().dyn_cast<RankedTensorType>();
-    if (!veqTy || veqTy.getRank() != 1)
-      return rewriter.notifyMatchFailure(op, "expected rank-1 tensor for targets");
-
-    // Allocate new tensor for initialized state
-    Value newTensor;
-    if (veqTy.isDynamicDim(0)) {
-      Value size = rewriter.create<tensor::DimOp>(loc, targets, 0);
-      newTensor = rewriter.create<tensor::EmptyOp>(
-          loc, ArrayRef<int64_t>{ShapedType::kDynamic}, veqTy.getElementType(), ValueRange{size});
-    } else {
-      newTensor = rewriter.create<tensor::EmptyOp>(
-          loc, ArrayRef<int64_t>{veqTy.getDimSize(0)}, veqTy.getElementType());
-    }
-
-    // Call runtime to initialize state
-    SmallVector<Type> retTypes{newTensor.getType()};
-    auto call = rewriter.create<func::CallOp>(
-        loc, rewriter.getStringAttr("__quake_init_state"), retTypes,
-        ValueRange{newTensor, statePtr});
-
-    rewriter.replaceOp(op, call.getResults());
-    return success();
-  }
-};
-*/
 
 struct ConvertInitState : public OpConversionPattern<quake::InitializeStateOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -158,52 +115,15 @@ struct ConvertInitState : public OpConversionPattern<quake::InitializeStateOp> {
   LogicalResult matchAndRewrite(quake::InitializeStateOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-
-    // Operands after type conversion:
-    // - targets: tensor<?xi1> or tensor<Nxi1>
-    // - state: !cc.ptr (pass-through)
     Value qvTensor = adaptor.getTargets();
-    Value statePtr = adaptor.getState();
+    Value statePtr = adaptor.getState(); // Ignored
 
     auto qvTy = qvTensor.getType().dyn_cast<RankedTensorType>();
     if (!qvTy || qvTy.getRank() != 1 || !qvTy.getElementType().isInteger(1))
-      return rewriter.notifyMatchFailure(op, "expected rank-1 tensor<i1> for targets");
+      return rewriter.notifyMatchFailure(op, "expected rank-1 tensor<i1>");
 
-    // Compute N = number of qubits.
-    Value nQubitsIdx;
-    if (qvTy.isDynamicDim(0)) {
-      nQubitsIdx = rewriter.create<tensor::DimOp>(loc, qvTensor, 0);
-    } else {
-      nQubitsIdx = rewriter.create<arith::ConstantIndexOp>(loc, qvTy.getDimSize(0));
-    }
-
-    // ampLen = 2^N (as index), via cast to i64, shl, cast back.
-    // index -> i64
-    Type i64Ty = rewriter.getIntegerType(64);
-    Value nQubitsI64 = rewriter.create<arith::IndexCastOp>(loc, i64Ty, nQubitsIdx);
-    Value oneI64 = rewriter.create<arith::ConstantIntOp>(loc, 1, /*width=*/64);
-    Value ampLenI64 = rewriter.create<arith::ShLIOp>(loc, oneI64, nQubitsI64);
-    Value ampLenIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), ampLenI64);
-
-    // Declare amplitude tensor type: tensor<?xcomplex<f64>>
-    auto c64Ty = mlir::ComplexType::get(rewriter.getF64Type());
-    auto ampsTy = RankedTensorType::get({ShapedType::kDynamic}, c64Ty);
-
-    // Call loader: (!cc.ptr, index) -> tensor<?xcomplex<f64>>
-    auto loadCall = rewriter.create<func::CallOp>(
-        loc, rewriter.getStringAttr("__quake_load_state"),
-        TypeRange{ampsTy}, ValueRange{statePtr, ampLenIdx});
-    Value amps = loadCall.getResult(0);
-
-    // Call initializer: (tensor<...xi1>, tensor<?xcomplex<f64>>) -> tensor<...xi1>
-    auto resultTensorTy = qvTensor.getType(); // same shape/elem type
-    auto initCall = rewriter.create<func::CallOp>(
-        loc, rewriter.getStringAttr("__quake_init_state_from_tensor"),
-        TypeRange{resultTensorTy}, ValueRange{qvTensor, amps});
-    Value newQv = initCall.getResult(0);
-
-    // Replace original op.
-    rewriter.replaceOp(op, newQv);
+    // If you don't want any amplitude materialization, just "RAII-return" the veq:
+    rewriter.replaceOp(op, qvTensor);
     return success();
   }
 };
@@ -393,9 +313,6 @@ struct ConvertExtractRef : public OpConversionPattern<quake::ExtractRefOp> {
     return success();
   }
 };
-
-
-
 
 /// Conversion pass driver
 struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
