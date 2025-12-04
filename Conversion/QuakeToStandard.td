@@ -20,6 +20,7 @@ def QuakeToStandard : Pass<"quake-to-standard", "mlir::ModuleOp"> {
     "mlir::complex::ComplexDialect",
     "mlir::scf::SCFDialect",
     "quake::QuakeDialect",
+    "cudaq::cc::CCDialect",
   ];
 }
 

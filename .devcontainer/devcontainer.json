@@ -33,7 +33,7 @@
           "*.qke": "mlir",
           "*.qtx": "mlir"
         },
-        "mlir.server_path": "cudaq-lsp-server",
+        "mlir.server_path": "/usr/local/bin/mlir-lsp-server",
         "mlir.onSettingsChanged": "restart",
         "markdownlint.config": {
           "MD013": { "tables": false, "code_blocks": false },

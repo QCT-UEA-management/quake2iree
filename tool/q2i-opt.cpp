@@ -4,6 +4,9 @@
 #include "Conversion/QuakeToStandard.h"
 #include "Dialect/Quake/QuakeDialect.h"
 #include "Dialect/CC/CCDialect.h"
+#include "Dialect/CC/CCOps.h"
+#include "Dialect/CC/CCTypes.h"
+
 
 #include "mlir/InitAllPasses.h"
 #include "mlir/InitAllDialects.h"
@@ -40,6 +43,7 @@ int main(int argc, char **argv) {
 
   // Register all the dialects with MLIRContext
   // Create the context with *that* registry
+  /*
   MLIRContext context;
   context.appendDialectRegistry(registry);
   context.loadAllAvailableDialects();  
@@ -51,7 +55,7 @@ int main(int argc, char **argv) {
   else
     llvm::errs() << "❌ quake::QuakeDialect *NOT* present.\n";
   
-
+  */
  
 
   return asMainReturnCode(
