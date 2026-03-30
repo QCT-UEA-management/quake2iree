@@ -30,7 +30,7 @@ ninja -j4
 
 ## Contribution Guidelines
 
-Create a new branch for any feature or fix (do not commit directly to main).
+Create a new branch for any feature or fix (do not commit directly to develop).
 
 Submit your changes through a Pull Request.
 
