@@ -4,7 +4,7 @@ In MLIR, translating one dialect to others is called **dialect conversion** or *
 ## 1. Understand Your Source & Target Dialects
 Before writing any code, answer:
 
-- What ops does your **source dialect** have? [quake_dialect_ops.md](quake_dialect_ops.md)
+- What ops does your **source dialect** have? [See here](quake_dialect_ops.md)
 - Which **target dialects** will you lower to? (e.g., arith, func, memref, llvm, scf)
 - Is this a **full lowering** (no source ops remain) or **partial lowering**? This is a **full lowering**
 
