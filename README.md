@@ -10,7 +10,7 @@ The system serves as a bridge between quantum computing frameworks (specifically
 
 Read the full guide here: <https://iree.dev/reference/extensions/#1-target-iree-input-dialects>
 
-Summary
+### Summary
 The easiest, cleanest, and most robust way to extend IREE is by leveraging MLIR’s design for dialect composition and conversion. IREE supports multiple input dialects such as:
 
     * tosa
@@ -29,6 +29,8 @@ ninja -j4
 ```
 
 ## Contribution Guidelines
+
+Have first a look at our documentation on [dialect conversion](docs/how_to_convert.md)
 
 Create a new branch for any feature or fix (do not commit directly to develop).
 
