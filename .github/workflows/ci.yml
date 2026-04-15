@@ -34,4 +34,4 @@ jobs:
       - name: Run MLIR conversion test via Python
         run: |
           cd test
-          python3 test_mlir_conversion.py
+          python3 -m unittest test_mlir_conversion -v

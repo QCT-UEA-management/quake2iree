@@ -1,97 +1,63 @@
 import os
 import subprocess
-import sys
+import unittest
 from pathlib import Path
 
-def run_test(input_file: Path, q2i_opt_path: Path):
-    prefix = input_file.stem.split('_')[0]  # get "01"
+TEST_DIR = Path(__file__).parent
+Q2I_OPT = TEST_DIR.parent / "build" / "tool" / "q2i-opt"
+
+
+def run_conversion(input_file: Path) -> tuple[bool, str, Path]:
+    """Run q2i-opt on input_file and return (success, stderr, output_path)."""
+    prefix = input_file.stem.split('_')[0]
     output_file = input_file.with_name(f"{prefix}_output.mlir")
 
-    # Clean previous output
     if output_file.exists():
         output_file.unlink()
 
-    print(f"🔧 Running test for: {input_file.name}")
-
-    # Check the binary exists and is executable
-    if not q2i_opt_path.exists() or not os.access(q2i_opt_path, os.X_OK):
-        print(f"❌ Error: {q2i_opt_path} not found or not executable.")
-        return False
-
-    # Run the q2i-opt tool
     result = subprocess.run(
-        [
-            str(q2i_opt_path),
-            str(input_file),
-            "--quake-to-standard",
-            "-o", str(output_file)
-        ],
+        [str(Q2I_OPT), str(input_file), "--quake-to-standard", "-o", str(output_file)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True
     )
-
-    # Check result
-    if result.returncode != 0:
-        print(f"❌ {input_file.name}: Conversion failed.")
-        print(result.stderr)
-        return False
-
-    if not output_file.exists():
-        print(f"❌ {input_file.name}: Output file was not created.")
-        return False
-
-    with open(output_file) as f:
-        contents = f.read()
-        if "module" not in contents:
-            print(f"❌ {input_file.name}: Output missing 'module'.")
-            return False
-
-    print(f"✅ {input_file.name}: Test passed.")
-    return True
+    return result.returncode == 0, result.stderr, output_file
 
 
-def main():
-    test_dir = Path(__file__).parent
-    q2i_opt_path = test_dir.parent / "build" / "tool" / "q2i-opt"  # adjust if path differs
+class TestQ2IOptAvailable(unittest.TestCase):
+    def test_binary_exists_and_executable(self):
+        self.assertTrue(Q2I_OPT.exists(), f"q2i-opt not found at {Q2I_OPT}")
+        self.assertTrue(os.access(Q2I_OPT, os.X_OK), f"q2i-opt is not executable")
 
-    passed = 0
-    num_tests = 0  
 
-    # test 1
-    test_file = test_dir / "01_quake_alloca.mlir"
-    num_tests += 1
-    if run_test(test_file, q2i_opt_path): passed += 1
+class TestMlirConversions(unittest.TestCase):
 
-    # test 2 
-    test_file = test_dir / "02_quake_veq_size.mlir"
-    num_tests += 1
-    if run_test(test_file, q2i_opt_path): passed += 1
+    def _assert_conversion(self, input_name: str):
+        input_file = TEST_DIR / input_name
+        success, stderr, output_file = run_conversion(input_file)
+        self.assertTrue(success, f"q2i-opt failed for {input_name}:\n{stderr}")
+        self.assertTrue(output_file.exists(), f"Output file not created: {output_file}")
+        contents = output_file.read_text()
+        self.assertIn("module", contents, f"Output missing 'module' keyword in {output_file.name}")
 
-    
-    # test 3 
-    test_file = test_dir / "03_quake_dealloc.mlir"
-    num_tests += 1
-    if run_test(test_file, q2i_opt_path): passed += 1
-        
-    # test 4 
-    test_file = test_dir / "04_quake_concat.mlir"
-    num_tests += 1
-    if run_test(test_file, q2i_opt_path): passed += 1
+    def test_01_quake_alloca(self):
+        self._assert_conversion("01_quake_alloca.mlir")
 
-    # test 5
-    test_file = test_dir / "05_quake_extractref.mlir"
-    num_tests += 1
-    if run_test(test_file, q2i_opt_path): passed += 1
+    def test_02_quake_veq_size(self):
+        self._assert_conversion("02_quake_veq_size.mlir")
 
-    # test 6
-    test_file = test_dir / "06_quake_initializestate.mlir"
-    num_tests += 1
-    if run_test(test_file, q2i_opt_path): passed += 1
+    def test_03_quake_dealloc(self):
+        self._assert_conversion("03_quake_dealloc.mlir")
 
-    print(f"\n ✅ {passed}/{num_tests} tests passed.")
-    if passed != num_tests:
-        sys.exit(1)
+    def test_04_quake_concat(self):
+        self._assert_conversion("04_quake_concat.mlir")
+
+    def test_05_quake_extractref(self):
+        self._assert_conversion("05_quake_extractref.mlir")
+
+    def test_06_quake_initializestate(self):
+        self._assert_conversion("06_quake_initializestate.mlir")
+
 
 if __name__ == "__main__":
-    main()
+    unittest.main(verbosity=2)
