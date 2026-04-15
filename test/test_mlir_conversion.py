@@ -1,20 +1,16 @@
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 TEST_DIR = Path(__file__).parent
+DATA_DIR = TEST_DIR / "data"
 Q2I_OPT = TEST_DIR.parent / "build" / "tool" / "q2i-opt"
 
 
-def run_conversion(input_file: Path) -> tuple[bool, str, Path]:
+def run_conversion(input_file: Path, output_file: Path) -> tuple[bool, str, Path]:
     """Run q2i-opt on input_file and return (success, stderr, output_path)."""
-    prefix = input_file.stem.split('_')[0]
-    output_file = input_file.with_name(f"{prefix}_output.mlir")
-
-    if output_file.exists():
-        output_file.unlink()
-
     result = subprocess.run(
         [str(Q2I_OPT), str(input_file), "--quake-to-standard", "-o", str(output_file)],
         stdout=subprocess.PIPE,
@@ -33,12 +29,14 @@ class TestQ2IOptAvailable(unittest.TestCase):
 class TestMlirConversions(unittest.TestCase):
 
     def _assert_conversion(self, input_name: str):
-        input_file = TEST_DIR / input_name
-        success, stderr, output_file = run_conversion(input_file)
-        self.assertTrue(success, f"q2i-opt failed for {input_name}:\n{stderr}")
-        self.assertTrue(output_file.exists(), f"Output file not created: {output_file}")
-        contents = output_file.read_text()
-        self.assertIn("module", contents, f"Output missing 'module' keyword in {output_file.name}")
+        input_file = DATA_DIR / input_name
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = Path(temp_dir) / f"{input_file.stem}_lowered.mlir"
+            success, stderr, output_file = run_conversion(input_file, output_file)
+            self.assertTrue(success, f"q2i-opt failed for {input_name}:\n{stderr}")
+            self.assertTrue(output_file.exists(), f"Output file not created: {output_file}")
+            contents = output_file.read_text()
+            self.assertIn("module", contents, f"Output missing 'module' keyword in {output_file.name}")
 
     def test_01_quake_alloca(self):
         self._assert_conversion("01_quake_alloca.mlir")

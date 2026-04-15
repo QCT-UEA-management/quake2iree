@@ -12,14 +12,14 @@ Read the full guide here: <https://iree.dev/reference/extensions/#1-target-iree-
 
 ### Summary
 
-The easiest, cleanest, and most robust way to extend IREE is by leveraging MLIR’s design for dialect composition and conversion. IREE supports multiple input dialects such as:
+The easiest, cleanest, and most robust way to extend IREE is by leveraging MLIR's design for dialect composition and conversion. IREE supports multiple input dialects such as:
 
-    * tosa
-    * mhlo
-    * linalg
-    * arith, math, tensor, and scf
+* tosa
+* mhlo
+* linalg
+* arith, math, tensor, and scf
 
-Any source IR that can be converted into this mix of dialects—either directly or transitively—will integrate seamlessly with the entire IREE pipeline across all deployment configurations and targets.
+Any source IR that can be converted into this mix of dialects, either directly or transitively, will integrate seamlessly with the entire IREE pipeline across all deployment configurations and targets.
 
 ## Building the project
 
@@ -34,28 +34,29 @@ This will create the `build/` directory, configure the project with CMake and Ni
 
 ## Running the tests
 
-The test suite uses Python's built-in `unittest` framework and lives in the `test/` directory. It requires the project to be built first (see above).
+The test suite uses Python's built-in `unittest` framework and lives in the `test/` directory. MLIR test inputs live in `test/data/` so the test modules stay separate from the sample IR files.
+
+The recommended way to run all tests is from the repository root:
+
+```bash
+./test.sh
+```
+
+This script expects the project to be built first with `./build.sh`. It runs unittest discovery over the `test/` directory and disables Python bytecode writes so test runs do not update `__pycache__` files.
+
+There are currently two test modules:
+
+* `test/test_mlir_conversion.py` runs `q2i-opt --quake-to-standard` on Quake dialect MLIR inputs from `test/data/` and checks that conversion succeeds.
+* `test/test_iree_compile.py` checks that lowered MLIR inputs from `test/data/` compile with `iree-compile`, and also checks the end-to-end path from Quake input to lowered MLIR to IREE bytecode.
+
+The IREE tests require `iree-compile` to be available in `PATH`. If it is not installed, those tests are skipped by unittest.
+
+You can also run individual test modules directly:
 
 ```bash
 cd test
-python3 -m unittest test_mlir_conversion -v
-```
-
-Each test runs the `q2i-opt --quake-to-standard` pass on a Quake dialect MLIR input file and verifies that the output is valid standard MLIR. A passing run looks like:
-
-```
-test_01_quake_alloca (test_mlir_conversion.TestMlirConversions) ... ok
-test_02_quake_veq_size (test_mlir_conversion.TestMlirConversions) ... ok
-test_03_quake_dealloc (test_mlir_conversion.TestMlirConversions) ... ok
-test_04_quake_concat (test_mlir_conversion.TestMlirConversions) ... ok
-test_05_quake_extractref (test_mlir_conversion.TestMlirConversions) ... ok
-test_06_quake_initializestate (test_mlir_conversion.TestMlirConversions) ... ok
-test_binary_exists_and_executable (test_mlir_conversion.TestQ2IOptAvailable) ... ok
-
-----------------------------------------------------------------------
-Ran 7 tests in 0.090s
-
-OK
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_mlir_conversion -v
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_iree_compile -v
 ```
 
 ## Contribution Guidelines
