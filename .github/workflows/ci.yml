@@ -1,37 +1,29 @@
 name: MLIR CI
 
 on:
-  # 1. Push Event
   push:
-    # Trigger the workflow when code is pushed directly to the 'develop' branch.
     branches: [develop]
-  # 2. Pull Request Event
   pull_request:
     branches: [develop]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    container:
-      image: marhvera/llvm-dev:latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure CMake
+      - name: Build devcontainer image
         run: |
-          mkdir -p build
-          cd build
-          cmake -G Ninja ..
+          docker build \
+            -f .devcontainer/Dockerfile \
+            -t quake2iree-ci \
+            .devcontainer
 
-      - name: Build project
+      - name: Build and test
         run: |
-          cd build
-          ninja -j4
-
-      - name: Make library executable
-        run: chmod +x build/tool/q2i-opt
-
-      - name: Run MLIR conversion test via Python
-        run: |
-          cd test
-          python3 -m unittest test_mlir_conversion -v
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspaces/quake2iree" \
+            -w /workspaces/quake2iree \
+            quake2iree-ci \
+            bash -lc './build.sh && ./test.sh'
