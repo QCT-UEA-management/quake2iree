@@ -1,10 +1,25 @@
 {
   "name": "passes-dev",
-  // PULL FROM DOCKER HUB:
-  "image": "marhvera/llvm-dev:latest",
+  // Build locally from Dockerfile (adds SSH + IREE on top of marhvera/llvm-dev:latest).
+  // To revert to the plain Hub image, replace the "build" block with:
+  //   "image": "marhvera/llvm-dev:latest",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
   "hostRequirements": {
     "gpu": "optional"
   },
+  // Forward container port 22 → host port 2222 for external SSH access.
+  // Connect with: ssh root@localhost -p 2222  (password: dev)
+  "forwardPorts": [22],
+  "portsAttributes": {
+    "22": {
+      "label": "SSH",
+      "onAutoForward": "silent"
+    }
+  },
+  // Start sshd every time the container (re)starts.
+  "postStartCommand": "service ssh start || true",
   "customizations": {
     "vscode": {
       "extensions": [
