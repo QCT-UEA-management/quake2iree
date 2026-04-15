@@ -47,9 +47,9 @@ This script expects the project to be built first with `./build.sh`. It runs uni
 There are currently two test modules:
 
 * `test/test_mlir_conversion.py` runs `q2i-opt --quake-to-standard` on Quake dialect MLIR inputs from `test/data/` and checks that conversion succeeds.
-* `test/test_iree_compile.py` checks that lowered MLIR inputs from `test/data/` compile with `iree-compile`, and also checks the end-to-end path from Quake input to lowered MLIR to IREE bytecode.
+* `test/test_iree_compile.py` checks that lowered MLIR inputs from `test/data/` compile with `iree-compile`, checks the end-to-end path from Quake input to lowered MLIR to IREE bytecode, and runs no-argument compiled modules with `iree-run-module`.
 
-The IREE tests require `iree-compile` to be available in `PATH`. If it is not installed, those tests are skipped by unittest.
+The IREE tests require `iree-compile` and `iree-run-module` to be available in `PATH`. If it is not installed, those tests are skipped by unittest.
 
 You can also run individual test modules directly:
 
