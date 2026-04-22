@@ -8,9 +8,9 @@ The **Quake dialect** is NVIDIA CUDA-Q's MLIR dialect for quantum kernel represe
 
 | Op | Description |
 |---|---|
-| `quake.alloca` | Allocate qubits (single `!quake.ref` or vector `!quake.veq<N>`) |
-| `quake.dealloc` | Deallocate qubits |
-| `quake.init_state` | Initialize qubits to a specific quantum state |
+| [`quake.alloca`](https://github.com/QCT-UEA-management/quake2iree/blob/b351e9ec9c63bb046ef54ff51ce0eadf84b7d626/Conversion/QuakeToStandard.cpp#L65) | Allocate qubits (single `!quake.ref` or vector `!quake.veq<N>`) |
+| [`quake.dealloc`](https://github.com/QCT-UEA-management/quake2iree/blob/b351e9ec9c63bb046ef54ff51ce0eadf84b7d626/Conversion/QuakeToStandard.cpp#L47) | Deallocate qubits |
+| [`quake.init_state`](https://github.com/QCT-UEA-management/quake2iree/blob/b351e9ec9c63bb046ef54ff51ce0eadf84b7d626/Conversion/QuakeToStandard.cpp#L115) | Initialize qubits to a specific quantum state |
 
 ---
 
@@ -18,11 +18,11 @@ The **Quake dialect** is NVIDIA CUDA-Q's MLIR dialect for quantum kernel represe
 
 | Op | Description |
 |---|---|
-| `quake.concat` | Concatenate quantum refs/vectors into a larger vector |
-| `quake.extract_ref` | Extract a single `!quake.ref` from a `!quake.veq`, by constant or dynamic index |
+| [`quake.concat`](https://github.com/QCT-UEA-management/quake2iree/blob/b351e9ec9c63bb046ef54ff51ce0eadf84b7d626/Conversion/QuakeToStandard.cpp#L137) | Concatenate quantum refs/vectors into a larger vector |
+| [`quake.extract_ref`](https://github.com/QCT-UEA-management/quake2iree/blob/b351e9ec9c63bb046ef54ff51ce0eadf84b7d626/Conversion/QuakeToStandard.cpp#L280) | Extract a single `!quake.ref` from a `!quake.veq`, by constant or dynamic index |
 | `quake.subveq` | Extract a subvector from a `!quake.veq` |
 | `quake.relax_size` | Convert a statically-sized `!quake.veq<N>` to a dynamically-sized `!quake.veq<?>` |
-| `quake.veq_size` | Get the runtime size of a qubit vector |
+| [`quake.veq_size`](https://github.com/QCT-UEA-management/quake2iree/blob/b351e9ec9c63bb046ef54ff51ce0eadf84b7d626/Conversion/QuakeToStandard.cpp#L264) | Get the runtime size of a qubit vector |
 
 ---
 
