@@ -35,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 RUN pip3 install --break-system-packages \
         iree-compiler \
-        iree-runtime
+        iree-runtime \
+        cudaq
 
 # ---------------------------------------------------------------------------
 # Expose SSH port
