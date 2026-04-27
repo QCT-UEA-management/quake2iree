@@ -7,9 +7,9 @@ include_directories(
 
 
 set (LIBS
-  CCDialect     
+  CCDialect
   QuakeDialect         # <== Your dialect
-  QuakeToStandard      # <== Your pass  
+  QuakeToStandard      # <== Your pass
   QuakeCommon
   MLIRSupport
   MLIRParser
@@ -19,6 +19,7 @@ set (LIBS
   MLIRFuncDialect
   MLIRArithDialect
   MLIRTensorDialect
+  MLIRLLVMDialect
   MLIRMlirOptMain
   MLIRIR
 )

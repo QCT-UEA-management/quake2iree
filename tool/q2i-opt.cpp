@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 
 using namespace mlir;
@@ -33,7 +34,8 @@ int main(int argc, char **argv) {
     tensor::TensorDialect,
     complex::ComplexDialect,
     quake::QuakeDialect,
-    cudaq::cc::CCDialect
+    cudaq::cc::CCDialect,
+    LLVM::LLVMDialect
   >();
 
 
