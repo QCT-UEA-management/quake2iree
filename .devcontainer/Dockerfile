@@ -1,5 +1,5 @@
 # ============================================================================ #
-# Copyright (c) 2022 - 2026 NVIDIA Corporation & Affiliates.                  #
+# Copyright (c) 2022 - 2026 NVIDIA Corporation & Affiliates.                   #
 # All rights reserved.                                                         #
 #                                                                              #
 # This source code and the accompanying materials are made available under     #
@@ -35,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 RUN pip3 install --break-system-packages \
         iree-compiler \
-        iree-runtime
+        iree-runtime  \
+        cudaq
 
 # ---------------------------------------------------------------------------
 # Expose SSH port
