@@ -50,9 +50,21 @@ def h_then_r1():
 
 banner("Phase gates — S, T, R1")
 ok = True
-ok = run_statevector_kernel(h_then_s,  "H+S        |0> -> (|0> + i|1>) / sqrt(2)") and ok
-ok = run_statevector_kernel(h_then_t,  "H+T        |0> -> (|0> + exp(i*pi/4)|1>) / sqrt(2)") and ok
-ok = run_statevector_kernel(h_then_r1, "H+R1(pi/3) |0> -> (|0> + exp(i*pi/3)|1>) / sqrt(2)") and ok
+ok = run_statevector_kernel(
+    h_then_s,
+    "H+S        |0> -> (|0> + i|1>) / sqrt(2)",
+    expected={0: 1 / math.sqrt(2), 1: 1j / math.sqrt(2)},
+) and ok
+ok = run_statevector_kernel(
+    h_then_t,
+    "H+T        |0> -> (|0> + exp(i*pi/4)|1>) / sqrt(2)",
+    expected={0: 1 / math.sqrt(2), 1: 0.5 + 0.5j},
+) and ok
+ok = run_statevector_kernel(
+    h_then_r1,
+    "H+R1(pi/3) |0> -> (|0> + exp(i*pi/3)|1>) / sqrt(2)",
+    expected={0: 1 / math.sqrt(2), 1: 0.5 / math.sqrt(2) + 0.5j * math.sqrt(3 / 2)},
+) and ok
 
 banner("Done" if ok else "Some kernels failed - see above")
 sys.exit(0 if ok else 1)

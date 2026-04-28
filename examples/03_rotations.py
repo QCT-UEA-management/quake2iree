@@ -63,9 +63,21 @@ def h_then_rz():
 
 banner("Rotation gates — RX, RY, RZ")
 ok = True
-ok = run_statevector_kernel(rx_half_turn,  "RX(π)      |0⟩ → -i|1⟩") and ok
-ok = run_statevector_kernel(ry_quarter,    "RY(π/2)    |0⟩ → (|0⟩+|1⟩)/√2") and ok
-ok = run_statevector_kernel(h_then_rz,     "H+RZ(π/2)  |0⟩ → (e^{-iπ/4}|0⟩ + e^{iπ/4}|1⟩)/√2") and ok
+ok = run_statevector_kernel(
+    rx_half_turn,
+    "RX(π)      |0⟩ → -i|1⟩",
+    expected={1: -1j},
+) and ok
+ok = run_statevector_kernel(
+    ry_quarter,
+    "RY(π/2)    |0⟩ → (|0⟩+|1⟩)/√2",
+    expected={0: 1 / math.sqrt(2), 1: 1 / math.sqrt(2)},
+) and ok
+ok = run_statevector_kernel(
+    h_then_rz,
+    "H+RZ(π/2)  |0⟩ → (e^{-iπ/4}|0⟩ + e^{iπ/4}|1⟩)/√2",
+    expected={0: 0.5 - 0.5j, 1: 0.5 + 0.5j},
+) and ok
 
 banner("Done" if ok else "Some kernels failed - see above")
 sys.exit(0 if ok else 1)

@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
+from math import sqrt
 from examples.pipeline import (
     banner,
     run_statevector_kernel,
@@ -43,10 +44,12 @@ ok = True
 ok = run_statevector_kernel(
     x_first_then_swap,
     "X(q[0]) + SWAP(q[0], q[1])  |01> -> |10>",
+    expected={2: 1.0},
 ) and ok
 ok = run_statevector_kernel(
     superposition_swap,
     "H(q[0]) + SWAP(q[0], q[1])  (|00> + |01>) -> (|00> + |10>)",
+    expected={0: 1 / sqrt(2), 2: 1 / sqrt(2)},
 ) and ok
 
 banner("Done" if ok else "Some kernels failed - see above")

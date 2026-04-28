@@ -148,6 +148,37 @@ def print_statevector(iree_output: str, threshold: float = 1e-5):
         print("    (all amplitudes below threshold)")
 
 
+def check_statevector(
+    iree_output: str,
+    expected: dict[int, complex],
+    *,
+    atol: float = 1e-4,
+) -> bool:
+    """Check final statevector amplitudes against a sparse expectation."""
+    values = parse_iree_f32_vector(iree_output)
+    if not values or len(values) % 2 != 0:
+        step_fail("check statevector", "could not parse statevector")
+        return False
+
+    n_complex = len(values) // 2
+    ok = True
+    for k in range(n_complex):
+        actual = complex(values[2 * k], values[2 * k + 1])
+        want = expected.get(k, 0.0 + 0.0j)
+        if abs(actual.real - want.real) > atol or abs(actual.imag - want.imag) > atol:
+            bits = format(k, f"0{n_complex.bit_length() - 1}b")
+            step_fail(
+                "check statevector",
+                f"|{bits}> expected {want.real:+.6f} {want.imag:+.6f}i, "
+                f"got {actual.real:+.6f} {actual.imag:+.6f}i",
+            )
+            ok = False
+
+    if ok:
+        step_ok("check statevector")
+    return ok
+
+
 # ---------------------------------------------------------------------------
 # Common example workflows
 # ---------------------------------------------------------------------------
@@ -161,6 +192,8 @@ def run_statevector_kernel(
     quake_max_lines: int = 20,
     lowered_max_lines: int = 60,
     print_raw_output: bool = False,
+    expected: dict[int, complex] | None = None,
+    atol: float = 1e-4,
 ) -> bool:
     """Run one CUDA-Q kernel through q2i-opt, IREE compile, and IREE run.
 
@@ -223,5 +256,7 @@ def run_statevector_kernel(
         else:
             print()
         print_statevector(result.stdout)
+        if expected is not None:
+            return check_statevector(result.stdout, expected, atol=atol)
 
     return True

@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
+from math import sqrt
 from examples.pipeline import (
     banner,
     run_statevector_kernel,
@@ -47,6 +48,7 @@ ok = run_statevector_kernel(
     show_quake=True,
     show_lowered=True,
     print_raw_output=True,
+    expected={0: 1 / sqrt(2), 7: 1 / sqrt(2)},
 )
 
 banner("Done" if ok else "Some kernels failed - see above")

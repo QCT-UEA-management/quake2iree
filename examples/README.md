@@ -21,6 +21,7 @@ Shared plumbing lives in `pipeline.py`:
 - `iree_run` executes the compiled module.
 - `run_statevector_kernel` runs the common statevector-oriented workflow used
   by the example scripts.
+- `check_statevector` optionally checks sparse expected amplitudes.
 
 Individual example scripts should stay focused on kernels and expectations.
 Avoid duplicating pipeline mechanics inside each script.
