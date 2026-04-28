@@ -14,11 +14,12 @@
 #include "mlir/IR/MLIRContext.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 
 using namespace mlir;
@@ -29,13 +30,14 @@ int main(int argc, char **argv) {
   // 1) Register *exactly* the dialects you need—including Quake—and any std ones
   registry.insert<
     arith::ArithDialect,
+    complex::ComplexDialect,
     func::FuncDialect,
+    LLVM::LLVMDialect,
+    memref::MemRefDialect,
     scf::SCFDialect,
     tensor::TensorDialect,
-    complex::ComplexDialect,
     quake::QuakeDialect,
-    cudaq::cc::CCDialect,
-    LLVM::LLVMDialect
+    cudaq::cc::CCDialect
   >();
 
 

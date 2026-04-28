@@ -103,3 +103,45 @@ def step_fail(step: str, stderr: str):
     if stderr.strip():
         for line in stderr.strip().splitlines():
             print(f"        {line}")
+
+
+def parse_iree_f32_vector(iree_output: str) -> list[float]:
+    """Extract the flat f32 values from iree-run-module output.
+
+    iree-run-module prints lines like:
+        result[0]: hal.buffer_view
+        8xf32=0.707107 0 0 0 0 0 0.707107 0
+    """
+    for line in iree_output.splitlines():
+        if "xf32=" in line:
+            values_str = line.split("=", 1)[1]
+            return [float(v) for v in values_str.split()]
+    return []
+
+
+def print_statevector(iree_output: str, threshold: float = 1e-5):
+    """Pretty-print a statevector from iree-run-module output.
+
+    The statevector is stored as flat f32: [re0, im0, re1, im1, ...].
+    Prints non-zero amplitudes in |k⟩ basis notation.
+    """
+    values = parse_iree_f32_vector(iree_output)
+    if not values or len(values) % 2 != 0:
+        print("  (could not parse statevector)")
+        return
+    n_complex = len(values) // 2
+    n_qubits = n_complex.bit_length() - 1
+    print(f"  statevector ({n_qubits} qubits, {n_complex} amplitudes):")
+    found_any = False
+    for k in range(n_complex):
+        re, im = values[2 * k], values[2 * k + 1]
+        mag = (re ** 2 + im ** 2) ** 0.5
+        if mag >= threshold:
+            bits = format(k, f"0{n_qubits}b")
+            if abs(im) < threshold:
+                print(f"    |{bits}⟩  {re:+.6f}")
+            else:
+                print(f"    |{bits}⟩  {re:+.6f} {im:+.6f}i")
+            found_any = True
+    if not found_any:
+        print("    (all amplitudes below threshold)")

@@ -16,10 +16,13 @@ set (LIBS
   MLIRPass
   MLIRTransforms
   MLIRDialect
-  MLIRFuncDialect
   MLIRArithDialect
-  MLIRTensorDialect
+  MLIRComplexDialect
+  MLIRFuncDialect
   MLIRLLVMDialect
+  MLIRMemRefDialect
+  MLIRSCFDialect
+  MLIRTensorDialect
   MLIRMlirOptMain
   MLIRIR
 )

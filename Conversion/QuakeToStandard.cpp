@@ -6,17 +6,21 @@
 #include "Dialect/CC/CCOps.h"
 #include "Dialect/CC/CCTypes.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Complex/IR/Complex.h"
-#include "mlir/IR/ImplicitLocOpBuilder.h"
-#include "mlir/IR/TypeUtilities.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/DialectConversion.h"
+
+#include <cmath>
+#include <complex>
 
 namespace mlir {
 namespace quake_to_standard {
@@ -24,332 +28,417 @@ namespace quake_to_standard {
 #define GEN_PASS_DEF_QUAKETOSTANDARD
 #include "Conversion/QuakeToStandard.h.inc"
 
-/// Type converter for Quake types → Tensor types
-class QuakeToStandardTypeConverter : public TypeConverter {
-public:
-  QuakeToStandardTypeConverter(MLIRContext *ctx) {
-    addConversion([](Type type) { return type; });
+// ---------------------------------------------------------------------------
+// Statevector type helpers
+//
+// Representation: tensor<(2 * 2^nQubits) x f32>
+//   flat interleaved real/imag f32 values
+//   sv[2*k]   = Re(amplitude[k])
+//   sv[2*k+1] = Im(amplitude[k])
+// ---------------------------------------------------------------------------
 
-    addConversion([ctx](quake::RefType) -> Type {
-      // Represent a single quantum reference as a length-1 tensor<i1>
-      return RankedTensorType::get({1}, IntegerType::get(ctx, 1));
-    });
+static RankedTensorType svTensorType(MLIRContext *ctx, int64_t nQubits) {
+  int64_t nF32 = 2LL * (1LL << nQubits);
+  return RankedTensorType::get({nF32}, Float32Type::get(ctx));
+}
 
-    addConversion([ctx](quake::VeqType t) -> Type {
-      int64_t size = t.hasSpecifiedSize() ? t.getSize() : ShapedType::kDynamic;
-      return RankedTensorType::get({size}, IntegerType::get(ctx, 1));
-    });
-  }
-};
+// Build |0...0> initial statevector: all zeros except sv[0] = 1.0
+static Value buildInitStatevector(OpBuilder &b, Location loc, int64_t nQubits) {
+  MLIRContext *ctx = b.getContext();
+  auto ty = svTensorType(ctx, nQubits);
+  int64_t nF32 = ty.getNumElements();
 
+  auto f32Ty = Float32Type::get(ctx);
+  SmallVector<Attribute> elems(nF32, FloatAttr::get(f32Ty, 0.0f));
+  elems[0] = FloatAttr::get(f32Ty, 1.0f);
+  return b.create<arith::ConstantOp>(loc, DenseElementsAttr::get(ty, elems));
+}
 
-/// Pattern to convert `quake.dealloc` → erased (no-op in Standard MLIR)
-struct ConvertDealloc : public OpConversionPattern<quake::DeallocOp> {
-  using OpConversionPattern::OpConversionPattern;
+// ---------------------------------------------------------------------------
+// Gate builders — take current tensor sv, return updated tensor.
+//
+// Bit arithmetic is entirely in i64.  We convert i64 → index explicitly
+// (arith.index_cast) before each tensor.extract / tensor.insert call.
+// We use arith.addi (not arith.ori) for non-overlapping bit fields —
+// IREE's VM lowering leaves arith.index_cast(arith.addi(i64)) as-is,
+// but adds unresolvable builtin.unrealized_conversion_cast for
+// arith.index_cast(arith.ori / arith.shli).
+// ---------------------------------------------------------------------------
 
-  LogicalResult matchAndRewrite(quake::DeallocOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    // In Quake, dealloc is used to release quantum memory (qubits),
-    // but in Standard MLIR, tensors are value types, so there’s no explicit free.
-    // We simply remove the operation.
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
+// Apply 2×2 unitary [[u00,u01],[u10,u11]] to qubit `qubitIdx` of `sv`.
+static Value buildApplyUnitary(OpBuilder &b, Location loc, Value sv,
+                               int64_t nQubits, int64_t qubitIdx,
+                               float u00r, float u00i,
+                               float u01r, float u01i,
+                               float u10r, float u10i,
+                               float u11r, float u11i) {
+  MLIRContext *ctx = b.getContext();
+  auto f32Ty = Float32Type::get(ctx);
+  auto i64Ty = b.getI64Type();
+  auto idxTy = b.getIndexType();
 
+  int64_t nComplex = 1LL << nQubits;
+  int64_t nPairs   = nComplex / 2;
 
-/// Pattern to convert `quake.alloca` → `tensor.empty`
-struct ConvertAlloca : public OpConversionPattern<quake::AllocaOp> {
-  using OpConversionPattern::OpConversionPattern;
+  Value c0  = b.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1  = b.create<arith::ConstantIndexOp>(loc, 1);
+  Value nP  = b.create<arith::ConstantIndexOp>(loc, nPairs);
 
-  LogicalResult matchAndRewrite(quake::AllocaOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    Type origType = op.getType();  // !quake.veq<?>, !quake.veq<2>, etc.
-    Type convertedType = getTypeConverter()->convertType(origType);
-    if (!convertedType)
-      return rewriter.notifyMatchFailure(op, "Failed to convert result type");
+  // Matrix constants (captured as Value in lambda — const-safe)
+  Value U00r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u00r));
+  Value U00i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u00i));
+  Value U01r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u01r));
+  Value U01i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u01i));
+  Value U10r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u10r));
+  Value U10i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u10i));
+  Value U11r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u11r));
+  Value U11i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u11i));
 
-    auto tensorTy = llvm::dyn_cast<RankedTensorType>(convertedType);
-    if (!tensorTy)
-      return rewriter.notifyMatchFailure(op, "Expected RankedTensorType");
+  // i64 constants for bit arithmetic (captured as Value)
+  Value qi_64    = b.create<arith::ConstantIntOp>(loc, qubitIdx, i64Ty);
+  Value c1_64    = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
+  Value stride   = b.create<arith::ShLIOp>(loc, c1_64, qi_64);   // 1 << qi
+  Value lmask    = b.create<arith::SubIOp>(loc, stride, c1_64);  // stride - 1
+  Value qp1      = b.create<arith::AddIOp>(loc, qi_64, c1_64);   // qi + 1
 
-    // Static shape case
-    if (tensorTy.hasStaticShape()) {
-      Value empty = rewriter.create<tensor::EmptyOp>(
-          loc, tensorTy.getShape(), tensorTy.getElementType());
-      rewriter.replaceOp(op, empty);
-      return success();
-    }
+  // scf.for carries the statevector tensor as iter_arg
+  auto loop = b.create<scf::ForOp>(
+      loc, c0, nP, c1, ValueRange{sv},
+      [U00r, U00i, U01r, U01i, U10r, U10i, U11r, U11i,
+       qi_64, stride, lmask, qp1, c1_64, i64Ty, idxTy]
+      (OpBuilder &body, Location l, Value j, ValueRange iters) {
+        Value sv_cur = iters[0];
 
-    // Dynamic shape
-    Value sizeVal = op.getSize();
+        // Compute complex pair indices k0 (bit-qi=0) and k1 = k0 | stride
+        // using addi instead of ori (bits are non-overlapping)
+        Value j64   = body.create<arith::IndexCastOp>(l, i64Ty, j);
+        Value lower = body.create<arith::AndIOp>(l, j64, lmask);
+        Value uHalf = body.create<arith::ShRUIOp>(l, j64, qi_64);
+        Value upper = body.create<arith::ShLIOp>(l, uHalf, qp1);
+        Value k0_64 = body.create<arith::AddIOp>(l, upper, lower); // addi
+        Value k1_64 = body.create<arith::AddIOp>(l, k0_64, stride); // addi
 
-    // If no explicit size operand, try extracting from the type
-    if (!sizeVal) {
-      if (auto veqTy = llvm::dyn_cast<quake::VeqType>(origType)) {
-        if (veqTy.hasSpecifiedSize()) {
-          int64_t size = veqTy.getSize();
-          sizeVal = rewriter.create<arith::ConstantIndexOp>(loc, size);
+        // f32 indices: 2*k, 2*k+1
+        Value k0r_64 = body.create<arith::ShLIOp>(l, k0_64, c1_64);
+        Value k0i_64 = body.create<arith::AddIOp>(l, k0r_64, c1_64);
+        Value k1r_64 = body.create<arith::ShLIOp>(l, k1_64, c1_64);
+        Value k1i_64 = body.create<arith::AddIOp>(l, k1r_64, c1_64);
+        Value k0r = body.create<arith::IndexCastOp>(l, idxTy, k0r_64);
+        Value k0i = body.create<arith::IndexCastOp>(l, idxTy, k0i_64);
+        Value k1r = body.create<arith::IndexCastOp>(l, idxTy, k1r_64);
+        Value k1i = body.create<arith::IndexCastOp>(l, idxTy, k1i_64);
+
+        // Load amplitudes a0 = sv[k0], a1 = sv[k1]
+        Value a0r = body.create<tensor::ExtractOp>(l, sv_cur, k0r);
+        Value a0i = body.create<tensor::ExtractOp>(l, sv_cur, k0i);
+        Value a1r = body.create<tensor::ExtractOp>(l, sv_cur, k1r);
+        Value a1i = body.create<tensor::ExtractOp>(l, sv_cur, k1i);
+
+        // na0 = U00 * a0 + U01 * a1  (complex multiply-add)
+        // na0r = U00r*a0r - U00i*a0i + U01r*a1r - U01i*a1i
+        Value t0 = body.create<arith::MulFOp>(l, U00r, a0r);
+        Value t1 = body.create<arith::MulFOp>(l, U00i, a0i);
+        Value t2 = body.create<arith::MulFOp>(l, U01r, a1r);
+        Value t3 = body.create<arith::MulFOp>(l, U01i, a1i);
+        Value na0r = body.create<arith::SubFOp>(l,
+            body.create<arith::AddFOp>(l, t0, t2),
+            body.create<arith::AddFOp>(l, t1, t3));
+        // na0i = U00r*a0i + U00i*a0r + U01r*a1i + U01i*a1r
+        Value t4 = body.create<arith::MulFOp>(l, U00r, a0i);
+        Value t5 = body.create<arith::MulFOp>(l, U00i, a0r);
+        Value t6 = body.create<arith::MulFOp>(l, U01r, a1i);
+        Value t7 = body.create<arith::MulFOp>(l, U01i, a1r);
+        Value na0i = body.create<arith::AddFOp>(l,
+            body.create<arith::AddFOp>(l, t4, t5),
+            body.create<arith::AddFOp>(l, t6, t7));
+
+        // na1 = U10 * a0 + U11 * a1
+        Value t8  = body.create<arith::MulFOp>(l, U10r, a0r);
+        Value t9  = body.create<arith::MulFOp>(l, U10i, a0i);
+        Value t10 = body.create<arith::MulFOp>(l, U11r, a1r);
+        Value t11 = body.create<arith::MulFOp>(l, U11i, a1i);
+        Value na1r = body.create<arith::SubFOp>(l,
+            body.create<arith::AddFOp>(l, t8, t10),
+            body.create<arith::AddFOp>(l, t9, t11));
+        Value t12 = body.create<arith::MulFOp>(l, U10r, a0i);
+        Value t13 = body.create<arith::MulFOp>(l, U10i, a0r);
+        Value t14 = body.create<arith::MulFOp>(l, U11r, a1i);
+        Value t15 = body.create<arith::MulFOp>(l, U11i, a1r);
+        Value na1i = body.create<arith::AddFOp>(l,
+            body.create<arith::AddFOp>(l, t12, t13),
+            body.create<arith::AddFOp>(l, t14, t15));
+
+        // Store updated amplitudes back into tensor (functional update)
+        Value s0 = body.create<tensor::InsertOp>(l, na0r, sv_cur, k0r);
+        Value s1 = body.create<tensor::InsertOp>(l, na0i, s0, k0i);
+        Value s2 = body.create<tensor::InsertOp>(l, na1r, s1, k1r);
+        Value s3 = body.create<tensor::InsertOp>(l, na1i, s2, k1i);
+        body.create<scf::YieldOp>(l, s3);
+      });
+  return loop.getResult(0);
+}
+
+// Apply CNOT: flip qubit `tgtIdx` when qubit `ctrlIdx` is |1>.
+static Value buildApplyCNOT(OpBuilder &b, Location loc, Value sv,
+                             int64_t nQubits, int64_t ctrlIdx, int64_t tgtIdx) {
+  auto i64Ty = b.getI64Type();
+  auto idxTy = b.getIndexType();
+
+  int64_t nComplex = 1LL << nQubits;
+  int64_t nPairs   = nComplex / 2;
+
+  Value c0  = b.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1  = b.create<arith::ConstantIndexOp>(loc, 1);
+  Value nP  = b.create<arith::ConstantIndexOp>(loc, nPairs);
+
+  Value ti      = b.create<arith::ConstantIntOp>(loc, tgtIdx, i64Ty);
+  Value ci      = b.create<arith::ConstantIntOp>(loc, ctrlIdx, i64Ty);
+  Value c1_64   = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
+  Value c0_64   = b.create<arith::ConstantIntOp>(loc, 0, i64Ty);
+  Value stTgt   = b.create<arith::ShLIOp>(loc, c1_64, ti);   // 1 << tgt
+  Value stCtrl  = b.create<arith::ShLIOp>(loc, c1_64, ci);   // 1 << ctrl
+  Value lmask   = b.create<arith::SubIOp>(loc, stTgt, c1_64); // stTgt - 1
+  Value tp1     = b.create<arith::AddIOp>(loc, ti, c1_64);   // tgt + 1
+
+  auto loop = b.create<scf::ForOp>(
+      loc, c0, nP, c1, ValueRange{sv},
+      [ti, stTgt, stCtrl, lmask, tp1, c1_64, c0_64, i64Ty, idxTy]
+      (OpBuilder &body, Location l, Value j, ValueRange iters) {
+        Value sv_cur = iters[0];
+
+        Value j64   = body.create<arith::IndexCastOp>(l, i64Ty, j);
+        Value lower = body.create<arith::AndIOp>(l, j64, lmask);
+        Value uHalf = body.create<arith::ShRUIOp>(l, j64, ti);
+        Value upper = body.create<arith::ShLIOp>(l, uHalf, tp1);
+        Value k0_64 = body.create<arith::AddIOp>(l, upper, lower);
+        Value k1_64 = body.create<arith::AddIOp>(l, k0_64, stTgt);
+
+        // f32 indices
+        Value k0r_64 = body.create<arith::ShLIOp>(l, k0_64, c1_64);
+        Value k0i_64 = body.create<arith::AddIOp>(l, k0r_64, c1_64);
+        Value k1r_64 = body.create<arith::ShLIOp>(l, k1_64, c1_64);
+        Value k1i_64 = body.create<arith::AddIOp>(l, k1r_64, c1_64);
+        Value k0r = body.create<arith::IndexCastOp>(l, idxTy, k0r_64);
+        Value k0i = body.create<arith::IndexCastOp>(l, idxTy, k0i_64);
+        Value k1r = body.create<arith::IndexCastOp>(l, idxTy, k1r_64);
+        Value k1i = body.create<arith::IndexCastOp>(l, idxTy, k1i_64);
+
+        // Swap amplitudes k0 ↔ k1 only when ctrl bit of k0 is set.
+        Value ctrlBit = body.create<arith::AndIOp>(l, k0_64, stCtrl);
+        Value isCtrl  = body.create<arith::CmpIOp>(
+            l, arith::CmpIPredicate::ne, ctrlBit, c0_64);
+
+        // scf.if with result carries the (possibly updated) tensor.
+        // The builder variant (cond, thenFn, elseFn) infers result types
+        // from the scf.yield inside each region.
+        Value updated = body.create<scf::IfOp>(
+            l, isCtrl,
+            [sv_cur, k0r, k0i, k1r, k1i](OpBuilder &tb, Location tl) {
+              Value a0r = tb.create<tensor::ExtractOp>(tl, sv_cur, k0r);
+              Value a0i = tb.create<tensor::ExtractOp>(tl, sv_cur, k0i);
+              Value a1r = tb.create<tensor::ExtractOp>(tl, sv_cur, k1r);
+              Value a1i = tb.create<tensor::ExtractOp>(tl, sv_cur, k1i);
+              Value s0  = tb.create<tensor::InsertOp>(tl, a1r, sv_cur, k0r);
+              Value s1  = tb.create<tensor::InsertOp>(tl, a1i, s0, k0i);
+              Value s2  = tb.create<tensor::InsertOp>(tl, a0r, s1, k1r);
+              Value s3  = tb.create<tensor::InsertOp>(tl, a0i, s2, k1i);
+              tb.create<scf::YieldOp>(tl, s3);
+            },
+            [sv_cur](OpBuilder &eb, Location el) {
+              eb.create<scf::YieldOp>(el, sv_cur);
+            }).getResult(0);
+
+        body.create<scf::YieldOp>(l, updated);
+      });
+  return loop.getResult(0);
+}
+
+// ---------------------------------------------------------------------------
+// Quantum function lowering
+//
+// Walks the quake ops in a function body in order, maintaining:
+//   veqToSv: quake.veq value → current statevector tensor
+//   refInfo: quake.ref value → (parent veq value, qubit index)
+//
+// Each gate op reads `veqToSv[veq]`, builds the updated tensor, and stores
+// it back.  This threads tensor SSA values through sequential gate ops
+// without requiring memref aliasing.
+//
+// The function's return type is updated to include the final statevector
+// tensor so IREE does not DCE the entire function body.
+// ---------------------------------------------------------------------------
+
+static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
+  // Map: original quake.veq SSA value → current tensor SSA value
+  llvm::DenseMap<Value, Value> veqToSv;
+  // Map: original quake.ref SSA value → (parent veq SSA value, qubit index)
+  llvm::DenseMap<Value, std::pair<Value, int64_t>> refInfo;
+
+  SmallVector<Operation *> toErase;
+  Value finalSv; // last statevector tensor produced (returned from function)
+
+  for (Block &block : fn.getBody()) {
+    for (Operation &opRef : block.getOperations()) {
+      Operation *op = &opRef;
+      OpBuilder b(op);
+      Location loc = op->getLoc();
+
+      if (auto alloca = dyn_cast<quake::AllocaOp>(op)) {
+        auto veqTy = alloca.getType().dyn_cast<quake::VeqType>();
+        if (!veqTy)
+          return op->emitError("expected VeqType result from alloca");
+        if (!veqTy.hasSpecifiedSize())
+          return op->emitError("dynamic qubit count not yet supported");
+        int64_t nQubits = veqTy.getSize();
+        Value sv = buildInitStatevector(b, loc, nQubits);
+        veqToSv[alloca.getResult()] = sv;
+        finalSv = sv;
+        toErase.push_back(op);
+
+      } else if (auto exRef = dyn_cast<quake::ExtractRefOp>(op)) {
+        Value veq = exRef.getVeq();
+        if (!exRef.hasConstantIndex())
+          return op->emitError("dynamic qubit index not yet supported");
+        int64_t qi = (int64_t)exRef.getRawIndex();
+        refInfo[exRef.getResult()] = {veq, qi};
+        toErase.push_back(op);
+
+      } else if (auto h = dyn_cast<quake::HOp>(op)) {
+        if (!h.getControls().empty())
+          return op->emitError("controlled-H not yet supported");
+        Value ref = h.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("H gate: ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        auto veqTy = veq.getType().cast<quake::VeqType>();
+        int64_t nQubits = veqTy.getSize();
+        Value sv = veqToSv[veq];
+        constexpr float k = 0.7071067811865476f; // 1/sqrt(2)
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            k, 0.f,  k, 0.f,
+            k, 0.f, -k, 0.f);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto x = dyn_cast<quake::XOp>(op)) {
+        auto ctrls = x.getControls();
+        Value ref = x.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("X gate: target ref not found in refInfo");
+        auto [veq, tgtQi] = it->second;
+        auto veqTy = veq.getType().cast<quake::VeqType>();
+        int64_t nQubits = veqTy.getSize();
+        Value sv = veqToSv[veq];
+        Value new_sv;
+        if (ctrls.empty()) {
+          // Pauli-X (NOT gate)
+          new_sv = buildApplyUnitary(b, loc, sv, nQubits, tgtQi,
+              0.f, 0.f,  1.f, 0.f,
+              1.f, 0.f,  0.f, 0.f);
+        } else if (ctrls.size() == 1) {
+          Value ctrlRef = ctrls[0];
+          auto cit = refInfo.find(ctrlRef);
+          if (cit == refInfo.end())
+            return op->emitError("CNOT: control ref not found in refInfo");
+          int64_t ctrlQi = cit->second.second;
+          new_sv = buildApplyCNOT(b, loc, sv, nQubits, ctrlQi, tgtQi);
         } else {
-          return rewriter.notifyMatchFailure(op, "Dynamic veq with no size operand");
+          return op->emitError("X with >1 controls not yet supported");
         }
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (isa<quake::DeallocOp>(op)) {
+        toErase.push_back(op);
       }
+      // All other ops (func.return, etc.) pass through unchanged.
     }
-
-    Value castSize = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), sizeVal);
-    SmallVector<Value> dynamicDims{castSize};
-
-    Value empty = rewriter.create<tensor::EmptyOp>(
-        loc, tensorTy.getShape(), tensorTy.getElementType(), dynamicDims);
-    rewriter.replaceOp(op, empty);
-    return success();
   }
-};
 
+  // Erase quake ops (in reverse order to avoid use-before-def issues)
+  for (Operation *op : llvm::reverse(toErase))
+    op->erase();
 
-struct ConvertInitState : public OpConversionPattern<quake::InitializeStateOp> {
-  using OpConversionPattern::OpConversionPattern;
+  if (!finalSv)
+    return fn->emitError("no statevector produced — no quake.alloca found");
 
-  LogicalResult matchAndRewrite(quake::InitializeStateOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    Value qvTensor = adaptor.getTargets();
-    Value statePtr = adaptor.getState(); // Ignored
+  // Update the function to return the final statevector tensor.
+  auto oldFnTy = fn.getFunctionType();
+  SmallVector<Type> newResults(oldFnTy.getResults().begin(),
+                               oldFnTy.getResults().end());
+  newResults.push_back(finalSv.getType());
+  fn.setFunctionType(FunctionType::get(ctx, oldFnTy.getInputs(), newResults));
 
-    auto qvTy = qvTensor.getType().dyn_cast<RankedTensorType>();
-    if (!qvTy || qvTy.getRank() != 1 || !qvTy.getElementType().isInteger(1))
-      return rewriter.notifyMatchFailure(op, "expected rank-1 tensor<i1>");
+  // Update every return op to include the final statevector.
+  fn.walk([&](func::ReturnOp ret) {
+    OpBuilder rb(ret);
+    SmallVector<Value> newOperands(ret.getOperands().begin(),
+                                   ret.getOperands().end());
+    newOperands.push_back(finalSv);
+    rb.create<func::ReturnOp>(ret.getLoc(), newOperands);
+    ret.erase();
+  });
 
-    // If you don't want any amplitude materialization, just "RAII-return" the veq:
-    rewriter.replaceOp(op, qvTensor);
-    return success();
-  }
-};
+  return success();
+}
 
+// ---------------------------------------------------------------------------
+// Pass driver
+// ---------------------------------------------------------------------------
 
-/// Pattern to convert `quake.concat` → sequence of `tensor.insert_slice`
-/// operations. LLVM 16–compatible fallback (no `tensor.concat`).
-struct ConvertConcat : public OpConversionPattern<quake::ConcatOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(quake::ConcatOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    ValueRange inputs = adaptor.getQbits();
-    if (inputs.empty())
-      return rewriter.notifyMatchFailure(op, "no inputs to concat");
-
-    // Normalize all inputs to rank-1 tensor<i1>.
-    SmallVector<Value> oneDInputs;  // we need to concatenate tensors, so let's include them in oneDInputs. oneDInputs acts as a **staging area** for normalized tensors
-    int64_t totalLen = 0;
-    bool allStatic = true;
-
-    for (Value v : inputs) {
-      auto rtt = dyn_cast<RankedTensorType>(v.getType());
-
-      //Check type and element type
-      if (!rtt || !rtt.getElementType().isInteger(1))
-        return rewriter.notifyMatchFailure(op, "expected tensor<i1> or tensor<?xi1>");
-
-      // Handle rank-0 tensors (scalar case)
-      if (rtt.getRank() == 0) {
-        // Promote tensor<i1> → tensor<1xi1>
-        auto scalar = rewriter.create<tensor::ExtractOp>(loc, v).getResult(); // i1
-        auto oneTy  = RankedTensorType::get({1}, rewriter.getI1Type()); // {1} means the shape is [1], so oneTy is tensor<1xi1>.
-        Value v1    = rewriter.create<tensor::SplatOp>(loc, oneTy, scalar).getResult(); // Create a tensor of shape {1} filled with that scalar
-        oneDInputs.push_back(v1);  // Adds the newly created rank-1 tensor to the list of normalized inputs
-        totalLen += 1; // Updates the total static length of the concatenated tensor
-        continue;
-      }
-
-      // Handle rank-1 tensors
-      if (rtt.getRank() == 1) {
-        oneDInputs.push_back(v);
-        if (rtt.isDynamicDim(0))
-          allStatic = false;
-        else
-          totalLen += rtt.getDimSize(0);
-        continue;
-      }
-
-      return rewriter.notifyMatchFailure(op, "unsupported tensor rank for concat");
-    }
-
-    // Now elemTy will be used as the element type for the result tensor that we are 
-    // about to create. Below we create the destination tensor (using tensor::EmptyOp), 
-    // we must specify: The shape (static or dynamic) and the element type.
-    Type elemTy = rewriter.getI1Type();  
-
-    // Does the Quake result type specify a fixed size?
-    // If not, treat the result as dynamic.
-    auto quakeResultTy = op.getType().dyn_cast<quake::VeqType>(); // retrieves the result type of the quake.concat operation
-    bool resultDynamic = !quakeResultTy || !quakeResultTy.hasSpecifiedSize(); // determines whether the result length is dynamic
-
-    // Create the destination tensor (either fully static or 1D dynamic).
-    Value result;
-    if (!resultDynamic && allStatic) {
-      result = rewriter.create<tensor::EmptyOp>(loc,
-                                                llvm::ArrayRef<int64_t>{totalLen},
-                                                elemTy
-                                                ).getResult();
-    } else {
-      // Compute total length dynamically.
-      Value totalSize = rewriter.create<arith::ConstantIndexOp>(loc, 0).getResult();
-      for (Value v : oneDInputs) {
-        auto ty = v.getType().cast<RankedTensorType>();
-        Value lenVal;
-        if (ty.isDynamicDim(0)) {
-          auto dimOp = rewriter.create<tensor::DimOp>(loc, v, 0);
-          lenVal = dimOp.getResult();
-        } else {
-          auto cst = rewriter.create<arith::ConstantIndexOp>(loc, ty.getDimSize(0));
-          lenVal = cst.getResult();
-        }
-        auto add = rewriter.create<arith::AddIOp>(loc, totalSize, lenVal);
-        totalSize = add.getResult();
-      }
-      SmallVector<Value> dynSizes{totalSize};
-      result = rewriter
-                 .create<tensor::EmptyOp>(loc,
-                                          llvm::ArrayRef<int64_t>{ShapedType::kDynamic},
-                                          elemTy, dynSizes)
-                 .getResult();
-    }
-
-    // Insert each slice in order.
-    Value offset = rewriter.create<arith::ConstantIndexOp>(loc, 0).getResult();
-    for (Value v : oneDInputs) {
-      auto ty = v.getType().cast<RankedTensorType>();
-
-      // Build `sizes` as OpFoldResult: Attr for static, Value for dynamic.
-      OpFoldResult lenOfr;
-      Value        lenValForAdd; // for offset update
-
-      if (ty.isDynamicDim(0)) {
-        auto dimOp = rewriter.create<tensor::DimOp>(loc, v, 0);
-        lenValForAdd = dimOp.getResult();
-        lenOfr = lenValForAdd; // dynamic size via SSA
-      } else {
-        int64_t n = ty.getDimSize(0);
-        lenOfr = rewriter.getIndexAttr(n); // static size as attribute
-        lenValForAdd = rewriter.create<arith::ConstantIndexOp>(loc, n).getResult();
-      }
-
-      SmallVector<OpFoldResult> offsets{offset};                   // dynamic offset ok
-      SmallVector<OpFoldResult> sizes{lenOfr};                     // <-- key: attr if static
-      SmallVector<OpFoldResult> strides{rewriter.getIndexAttr(1)}; // static stride=1
-
-      result = rewriter.create<tensor::InsertSliceOp>(loc, v, result,
-                                                offsets, sizes, strides)
-                 .getResult();
-
-      // offset += len
-      auto add = rewriter.create<arith::AddIOp>(loc, offset, lenValForAdd);
-      offset = add.getResult();
-    }
-
-    rewriter.replaceOp(op, result);
-    return success();
-  }
-};
-
-
-
-/// Pattern to convert `quake.veq_size` → `tensor.dim`.
-struct ConvertVeqSize : public OpConversionPattern<quake::VeqSizeOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(quake::VeqSizeOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    Value veq = adaptor.getVeq();
-    auto tensorTy = llvm::dyn_cast<RankedTensorType>(veq.getType());
-    if (!tensorTy || tensorTy.getRank() != 1)
-      return rewriter.notifyMatchFailure(op, "expected 1D tensor for veq");
-
-    Value dim = rewriter.create<tensor::DimOp>(loc, veq, 0);
-    rewriter.replaceOp(op, dim);
-    return success();
-  }
-};
-
-
-
-struct ConvertExtractRef : public OpConversionPattern<quake::ExtractRefOp> {
-  using OpConversionPattern::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(quake::ExtractRefOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc(); // Captures the operation’s source location
-    Value veqTensor = adaptor.getVeq(); // normalized tensor<?xi1>
-    Value indexVal = adaptor.getIndex(); // dynamic index if provided
-
-    auto veqTy = veqTensor.getType().dyn_cast<RankedTensorType>();
-    if (!veqTy || veqTy.getRank() != 1)
-      return rewriter.notifyMatchFailure(op, "expected rank-1 tensor for veq");
-
-    // Result type: tensor<1xi1>
-    auto elemTy = rewriter.getI1Type();
-    auto oneTy = RankedTensorType::get({1}, elemTy);
-
-    // Compute offset: dynamic if indexVal exists, else static from rawIndex
-    OpFoldResult offset;
-    if (indexVal) {
-      offset = indexVal; // dynamic offset
-    } else {
-      offset = rewriter.getIndexAttr(op.getRawIndex()); // static offset
-    }
-
-    SmallVector<OpFoldResult> offsets{offset};
-    SmallVector<OpFoldResult> sizes{rewriter.getIndexAttr(1)}; // size = 1
-    SmallVector<OpFoldResult> strides{rewriter.getIndexAttr(1)}; // stride = 1
-
-    Value slice = rewriter.create<tensor::ExtractSliceOp>(
-        loc, oneTy, veqTensor, offsets, sizes, strides);
-
-    rewriter.replaceOp(op, slice);
-    return success();
-  }
-};
-
-/// Conversion pass driver
 struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
   using QuakeToStandardBase::QuakeToStandardBase;
 
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
-    Operation *module = getOperation();
+    MLIRContext *ctx = &getContext();
+    ModuleOp module = getOperation();
 
-    QuakeToStandardTypeConverter typeConverter(context);
-    RewritePatternSet patterns(context);
-    patterns.add<ConvertDealloc>(typeConverter, context);
-    patterns.add<ConvertAlloca>(typeConverter, context);
-    patterns.add<ConvertInitState>(typeConverter, context);    
-    patterns.add<ConvertVeqSize>(typeConverter, context);
-    patterns.add<ConvertConcat>(typeConverter, context);
-    patterns.add<ConvertExtractRef>(typeConverter, context);
+    // Lower each function that contains quake ops.
+    SmallVector<func::FuncOp> toProcess;
+    module->walk([&](func::FuncOp fn) {
+      bool hasQuake = false;
+      fn->walk([&](Operation *op) {
+        if (isa<quake::AllocaOp>(op)) hasQuake = true;
+      });
+      if (hasQuake) toProcess.push_back(fn);
+    });
 
-    ConversionTarget target(*context);
-    target.addLegalDialect<arith::ArithDialect>();
-    target.addLegalDialect<func::FuncDialect>();
-    target.addLegalDialect<tensor::TensorDialect>();
-    target.addLegalDialect<complex::ComplexDialect>();
-    target.addLegalDialect<cudaq::cc::CCDialect>();
-    target.addIllegalDialect<quake::QuakeDialect>();
+    for (func::FuncOp fn : toProcess) {
+      if (failed(lowerQuantumFunction(fn, ctx))) {
+        signalPassFailure();
+        return;
+      }
+    }
 
-    populateFunctionOpInterfaceTypeConversionPattern<func::FuncOp>(
-        patterns, typeConverter);
+    // Strip CUDA-Q runtime boilerplate that IREE cannot parse:
+    //   - all llvm.func ops (typed-pointer signatures unknown to IREE)
+    //   - declaration-only private func.func ops (runtime glue with no body)
+    SmallVector<Operation *> toErase;
+    module->walk([&](Operation *op) {
+      if (isa<LLVM::LLVMFuncOp>(op)) {
+        toErase.push_back(op);
+      } else if (auto fn = dyn_cast<func::FuncOp>(op)) {
+        if (fn.isPrivate() && fn.empty())
+          toErase.push_back(fn);
+      }
+    });
+    for (Operation *op : toErase)
+      op->erase();
 
-    target.addDynamicallyLegalOp<func::FuncOp>(
-        [&](func::FuncOp op) {
-          return typeConverter.isSignatureLegal(op.getFunctionType()) &&
-                 typeConverter.isLegal(&op.getBody());
-        });
-
-    if (failed(applyPartialConversion(module, target, std::move(patterns))))
-      signalPassFailure();
+    // Remove cc.* and quake.* module-level attributes (CUDA-Q metadata that
+    // references types IREE does not know about).
+    SmallVector<StringAttr> attrsToRemove;
+    for (NamedAttribute na : module->getAttrs()) {
+      StringRef name = na.getName().getValue();
+      if (name.starts_with("cc.") || name.starts_with("quake."))
+        attrsToRemove.push_back(na.getName());
+    }
+    for (StringAttr name : attrsToRemove)
+      module->removeAttr(name);
   }
 };
 

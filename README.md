@@ -59,6 +59,41 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_mlir_conversion -v
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_iree_compile -v
 ```
 
+## Pipeline examples
+
+The `examples/` directory contains end-to-end scripts that drive real CUDA-Q
+kernels through the full conversion pipeline. Unlike the test suite, examples
+are expected to fail at the current frontier of the implementation — each
+failure surfaces a concrete missing piece in `quake2iree`.
+
+### Shared helper — `examples/pipeline.py`
+
+Provides thin wrappers around each pipeline stage and display utilities used
+by all example scripts:
+
+| Function | Stage |
+|---|---|
+| `emit_quake(kernel)` | Compile a CUDA-Q kernel and return its raw quake MLIR string |
+| `entrypoint_name(quake_ir)` | Extract the `cudaq-entrypoint` function symbol name |
+| `q2i_convert(input, output)` | Run `q2i-opt --quake-to-standard` |
+| `iree_compile(input, output)` | Run `iree-compile --iree-hal-target-backends=llvm-cpu` |
+| `iree_run(vmfb, function)` | Run `iree-run-module` |
+
+### Running an example
+
+```bash
+python3 examples/01_bell.py
+```
+
+Each script prints the intermediate IR at every stage and stops with a
+descriptive error at the first failure, so you can immediately see where the
+pipeline breaks and why.
+
+### Current examples
+
+* `examples/01_bell.py` — Bell state (H + CNOT on two qubits). Currently
+  fails at `q2i-opt` because `quake.h` has no lowering pattern yet.
+
 ## Contribution Guidelines
 
 Have first a look at our documentation on [dialect conversion](docs/how_to_convert.md)
