@@ -15,7 +15,6 @@ Run from the repo root:
 
 import math
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -23,53 +22,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import cudaq
 from examples.pipeline import (
     banner,
-    emit_quake,
-    entrypoint_name,
-    iree_compile,
-    iree_run,
-    print_statevector,
-    q2i_convert,
-    show_ir,
-    step_fail,
-    step_ok,
+    run_statevector_kernel,
 )
-
-
-def run_kernel(kernel, label: str):
-    """Run one kernel through the full pipeline and print the statevector."""
-    banner(f"{label}")
-    quake_ir = emit_quake(kernel)
-    func_name = entrypoint_name(quake_ir)
-    show_ir("quake IR", quake_ir, max_lines=20)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        qf = tmp / "kernel.mlir"
-        lf = tmp / "kernel_lowered.mlir"
-        vf = tmp / "kernel.vmfb"
-
-        qf.write_text(quake_ir)
-
-        r = q2i_convert(qf, lf)
-        if r.returncode != 0:
-            step_fail("q2i-opt", r.stderr)
-            return False
-        step_ok("q2i-opt --quake-to-standard")
-
-        r = iree_compile(lf, vf)
-        if r.returncode != 0:
-            step_fail("iree-compile", r.stderr)
-            return False
-        step_ok("iree-compile", f"{vf.stat().st_size} bytes")
-
-        r = iree_run(vf, func_name)
-        if r.returncode != 0:
-            step_fail("iree-run-module", r.stderr)
-            return False
-        step_ok("iree-run-module")
-        print()
-        print_statevector(r.stdout)
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +63,9 @@ def h_then_rz():
 
 banner("Rotation gates — RX, RY, RZ")
 ok = True
-ok = run_kernel(rx_half_turn,  "RX(π)      |0⟩ → -i|1⟩") and ok
-ok = run_kernel(ry_quarter,    "RY(π/2)    |0⟩ → (|0⟩+|1⟩)/√2") and ok
-ok = run_kernel(h_then_rz,     "H+RZ(π/2)  |0⟩ → (e^{-iπ/4}|0⟩ + e^{iπ/4}|1⟩)/√2") and ok
+ok = run_statevector_kernel(rx_half_turn,  "RX(π)      |0⟩ → -i|1⟩") and ok
+ok = run_statevector_kernel(ry_quarter,    "RY(π/2)    |0⟩ → (|0⟩+|1⟩)/√2") and ok
+ok = run_statevector_kernel(h_then_rz,     "H+RZ(π/2)  |0⟩ → (e^{-iπ/4}|0⟩ + e^{iπ/4}|1⟩)/√2") and ok
 
-banner("Done" if ok else "Some kernels failed — see above")
+banner("Done" if ok else "Some kernels failed - see above")
 sys.exit(0 if ok else 1)

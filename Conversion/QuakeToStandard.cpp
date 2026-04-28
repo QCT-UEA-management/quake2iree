@@ -388,6 +388,96 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         finalSv = new_sv;
         toErase.push_back(op);
 
+      } else if (auto swap = dyn_cast<quake::SwapOp>(op)) {
+        if (!swap.getControls().empty())
+          return op->emitError("controlled-SWAP not yet supported");
+        Value ref0 = swap.getTargets()[0];
+        Value ref1 = swap.getTargets()[1];
+        auto it0 = refInfo.find(ref0);
+        auto it1 = refInfo.find(ref1);
+        if (it0 == refInfo.end() || it1 == refInfo.end())
+          return op->emitError("SWAP: target ref not found in refInfo");
+        auto [veq0, qi0] = it0->second;
+        auto [veq1, qi1] = it1->second;
+        if (veq0 != veq1)
+          return op->emitError("SWAP across different qvectors not yet supported");
+        if (qi0 == qi1)
+          return op->emitError("SWAP target refs must be distinct");
+        int64_t nQubits = veq0.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq0];
+        // SWAP(a, b) = CNOT(a, b); CNOT(b, a); CNOT(a, b).
+        Value s0 = buildApplyCNOT(b, loc, sv, nQubits, qi0, qi1);
+        Value s1 = buildApplyCNOT(b, loc, s0, nQubits, qi1, qi0);
+        Value new_sv = buildApplyCNOT(b, loc, s1, nQubits, qi0, qi1);
+        veqToSv[veq0] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto s = dyn_cast<quake::SOp>(op)) {
+        if (!s.getControls().empty())
+          return op->emitError("controlled-S not yet supported");
+        Value ref = s.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("S: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        // S = [[1, 0], [0, i]], S† = [[1, 0], [0, -i]]
+        float sign = s.isAdj() ? -1.f : 1.f;
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            1.f, 0.f, 0.f, 0.f,
+            0.f, 0.f, 0.f, sign);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto t = dyn_cast<quake::TOp>(op)) {
+        if (!t.getControls().empty())
+          return op->emitError("controlled-T not yet supported");
+        Value ref = t.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("T: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        constexpr float k = 0.7071067811865476f; // 1/sqrt(2)
+        float imag = t.isAdj() ? -k : k;
+        // T = [[1, 0], [0, exp(i*pi/4)]]
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            1.f, 0.f, 0.f, 0.f,
+            0.f, 0.f, k, imag);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto r1 = dyn_cast<quake::R1Op>(op)) {
+        if (!r1.getControls().empty())
+          return op->emitError("controlled-R1 not yet supported");
+        Value angleVal = r1.getParameters()[0];
+        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
+        if (!cstOp)
+          return op->emitError("R1: only constant angles supported");
+        double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+        if (r1.isAdj())
+          lam *= -1.0;
+        double c = std::cos(lam), s = std::sin(lam);
+        Value ref = r1.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("R1: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        // R1(lambda) = [[1, 0], [0, exp(i*lambda)]]
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            1.f, 0.f,       0.f, 0.f,
+            0.f, 0.f, (float)c, (float)s);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
       } else if (auto rx = dyn_cast<quake::RxOp>(op)) {
         if (!rx.getControls().empty())
           return op->emitError("controlled-Rx not yet supported");

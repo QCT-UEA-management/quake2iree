@@ -9,6 +9,7 @@ readable without duplicating formatting logic.
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -145,3 +146,82 @@ def print_statevector(iree_output: str, threshold: float = 1e-5):
             found_any = True
     if not found_any:
         print("    (all amplitudes below threshold)")
+
+
+# ---------------------------------------------------------------------------
+# Common example workflows
+# ---------------------------------------------------------------------------
+
+def run_statevector_kernel(
+    kernel,
+    label: str,
+    *,
+    show_quake: bool = True,
+    show_lowered: bool = False,
+    quake_max_lines: int = 20,
+    lowered_max_lines: int = 60,
+    print_raw_output: bool = False,
+) -> bool:
+    """Run one CUDA-Q kernel through q2i-opt, IREE compile, and IREE run.
+
+    This helper is intentionally display-oriented: examples should stay useful
+    as human-readable development probes. Later tests can reuse the lower-level
+    stage runners above for stricter assertions.
+    """
+    banner(label)
+
+    quake_ir = emit_quake(kernel)
+    func_name = entrypoint_name(quake_ir)
+    if show_quake:
+        show_ir("quake IR", quake_ir, max_lines=quake_max_lines)
+    step_ok("emit_quake", f"entrypoint = {func_name}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        quake_file = tmp_path / "kernel.mlir"
+        lowered_file = tmp_path / "kernel_lowered.mlir"
+        vmfb_file = tmp_path / "kernel.vmfb"
+
+        quake_file.write_text(quake_ir)
+
+        result = q2i_convert(quake_file, lowered_file)
+        if result.returncode != 0:
+            step_fail("q2i-opt --quake-to-standard", result.stderr)
+            print("\n  Pipeline stopped here - fix q2i-opt errors above to continue.")
+            return False
+        step_ok("q2i-opt --quake-to-standard")
+
+        if show_lowered:
+            lowered_ir = lowered_file.read_text()
+            show_ir("lowered MLIR (standard dialects)", lowered_ir,
+                    max_lines=lowered_max_lines)
+
+        try:
+            result = iree_compile(lowered_file, vmfb_file)
+        except RuntimeError as exc:
+            step_fail("iree-compile", str(exc))
+            return False
+        if result.returncode != 0:
+            step_fail("iree-compile", result.stderr)
+            print("\n  Pipeline stopped here - fix iree-compile errors above to continue.")
+            return False
+        step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
+
+        try:
+            result = iree_run(vmfb_file, func_name)
+        except RuntimeError as exc:
+            step_fail("iree-run-module", str(exc))
+            return False
+        if result.returncode != 0:
+            step_fail("iree-run-module", result.stderr)
+            return False
+        step_ok("iree-run-module")
+
+        if print_raw_output and result.stdout.strip():
+            print(f"\n  raw output:\n  {result.stdout.strip()}")
+            print()
+        else:
+            print()
+        print_statevector(result.stdout)
+
+    return True
