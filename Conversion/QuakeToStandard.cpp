@@ -3,8 +3,6 @@
 #include "Dialect/Quake/QuakeOps.h"
 #include "Dialect/Quake/QuakeTypes.h"
 #include "Dialect/CC/CCDialect.h"
-#include "Dialect/CC/CCOps.h"
-#include "Dialect/CC/CCTypes.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
