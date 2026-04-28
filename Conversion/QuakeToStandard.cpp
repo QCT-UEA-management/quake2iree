@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
@@ -253,6 +254,130 @@ static Value buildApplyCNOT(OpBuilder &b, Location loc, Value sv,
   return loop.getResult(0);
 }
 
+// Deterministic Z-basis measurement bit: true when P(qubit=1) > 0.5.
+// This is correct for basis states and intentionally not stochastic yet.
+static Value buildMeasureZBit(OpBuilder &b, Location loc, Value sv,
+                              int64_t nQubits, int64_t qubitIdx) {
+  auto f32Ty = Float32Type::get(b.getContext());
+  auto i64Ty = b.getI64Type();
+  auto idxTy = b.getIndexType();
+
+  int64_t nComplex = 1LL << nQubits;
+
+  Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+  Value nC = b.create<arith::ConstantIndexOp>(loc, nComplex);
+
+  Value zeroF = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.0f));
+  Value halfF = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.5f));
+  Value qi = b.create<arith::ConstantIntOp>(loc, qubitIdx, i64Ty);
+  Value one64 = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
+  Value zero64 = b.create<arith::ConstantIntOp>(loc, 0, i64Ty);
+  Value stride = b.create<arith::ShLIOp>(loc, one64, qi);
+
+  auto loop = b.create<scf::ForOp>(
+      loc, c0, nC, c1, ValueRange{zeroF},
+      [sv, stride, one64, zero64, i64Ty, idxTy]
+      (OpBuilder &body, Location l, Value k, ValueRange iters) {
+        Value acc = iters[0];
+        Value k64 = body.create<arith::IndexCastOp>(l, i64Ty, k);
+        Value bit = body.create<arith::AndIOp>(l, k64, stride);
+        Value isOne = body.create<arith::CmpIOp>(
+            l, arith::CmpIPredicate::ne, bit, zero64);
+
+        Value next = body.create<scf::IfOp>(
+            l, isOne,
+            [sv, acc, k64, one64, idxTy](OpBuilder &tb, Location tl) {
+              Value kr64 = tb.create<arith::ShLIOp>(tl, k64, one64);
+              Value ki64 = tb.create<arith::AddIOp>(tl, kr64, one64);
+              Value kr = tb.create<arith::IndexCastOp>(tl, idxTy, kr64);
+              Value ki = tb.create<arith::IndexCastOp>(tl, idxTy, ki64);
+              Value re = tb.create<tensor::ExtractOp>(tl, sv, kr);
+              Value im = tb.create<tensor::ExtractOp>(tl, sv, ki);
+              Value re2 = tb.create<arith::MulFOp>(tl, re, re);
+              Value im2 = tb.create<arith::MulFOp>(tl, im, im);
+              Value prob = tb.create<arith::AddFOp>(tl, re2, im2);
+              Value sum = tb.create<arith::AddFOp>(tl, acc, prob);
+              tb.create<scf::YieldOp>(tl, sum);
+            },
+            [acc](OpBuilder &eb, Location el) {
+              eb.create<scf::YieldOp>(el, acc);
+            }).getResult(0);
+
+        body.create<scf::YieldOp>(l, next);
+      });
+
+  return b.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGT,
+                                loop.getResult(0), halfF);
+}
+
+// Reset qubit `qubitIdx` to |0>. For each target-bit pair, move probability
+// mass to the bit-0 amplitude and zero the bit-1 amplitude.
+static Value buildApplyReset(OpBuilder &b, Location loc, Value sv,
+                             int64_t nQubits, int64_t qubitIdx) {
+  auto f32Ty = Float32Type::get(b.getContext());
+  auto i64Ty = b.getI64Type();
+  auto idxTy = b.getIndexType();
+
+  int64_t nComplex = 1LL << nQubits;
+  int64_t nPairs = nComplex / 2;
+
+  Value c0 = b.create<arith::ConstantIndexOp>(loc, 0);
+  Value c1 = b.create<arith::ConstantIndexOp>(loc, 1);
+  Value nP = b.create<arith::ConstantIndexOp>(loc, nPairs);
+  Value zeroF = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.0f));
+
+  Value qi64 = b.create<arith::ConstantIntOp>(loc, qubitIdx, i64Ty);
+  Value one64 = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
+  Value stride = b.create<arith::ShLIOp>(loc, one64, qi64);
+  Value lmask = b.create<arith::SubIOp>(loc, stride, one64);
+  Value qp1 = b.create<arith::AddIOp>(loc, qi64, one64);
+
+  auto loop = b.create<scf::ForOp>(
+      loc, c0, nP, c1, ValueRange{sv},
+      [zeroF, qi64, stride, lmask, qp1, one64, i64Ty, idxTy]
+      (OpBuilder &body, Location l, Value j, ValueRange iters) {
+        Value svCur = iters[0];
+
+        Value j64 = body.create<arith::IndexCastOp>(l, i64Ty, j);
+        Value lower = body.create<arith::AndIOp>(l, j64, lmask);
+        Value uHalf = body.create<arith::ShRUIOp>(l, j64, qi64);
+        Value upper = body.create<arith::ShLIOp>(l, uHalf, qp1);
+        Value k0_64 = body.create<arith::AddIOp>(l, upper, lower);
+        Value k1_64 = body.create<arith::AddIOp>(l, k0_64, stride);
+
+        Value k0r64 = body.create<arith::ShLIOp>(l, k0_64, one64);
+        Value k0i64 = body.create<arith::AddIOp>(l, k0r64, one64);
+        Value k1r64 = body.create<arith::ShLIOp>(l, k1_64, one64);
+        Value k1i64 = body.create<arith::AddIOp>(l, k1r64, one64);
+        Value k0r = body.create<arith::IndexCastOp>(l, idxTy, k0r64);
+        Value k0i = body.create<arith::IndexCastOp>(l, idxTy, k0i64);
+        Value k1r = body.create<arith::IndexCastOp>(l, idxTy, k1r64);
+        Value k1i = body.create<arith::IndexCastOp>(l, idxTy, k1i64);
+
+        Value a0r = body.create<tensor::ExtractOp>(l, svCur, k0r);
+        Value a0i = body.create<tensor::ExtractOp>(l, svCur, k0i);
+        Value a1r = body.create<tensor::ExtractOp>(l, svCur, k1r);
+        Value a1i = body.create<tensor::ExtractOp>(l, svCur, k1i);
+
+        Value a0r2 = body.create<arith::MulFOp>(l, a0r, a0r);
+        Value a0i2 = body.create<arith::MulFOp>(l, a0i, a0i);
+        Value a1r2 = body.create<arith::MulFOp>(l, a1r, a1r);
+        Value a1i2 = body.create<arith::MulFOp>(l, a1i, a1i);
+        Value p0 = body.create<arith::AddFOp>(l, a0r2, a0i2);
+        Value p1 = body.create<arith::AddFOp>(l, a1r2, a1i2);
+        Value prob = body.create<arith::AddFOp>(l, p0, p1);
+        Value resetAmp = body.create<math::SqrtOp>(l, prob);
+
+        Value s0 = body.create<tensor::InsertOp>(l, resetAmp, svCur, k0r);
+        Value s1 = body.create<tensor::InsertOp>(l, zeroF, s0, k0i);
+        Value s2 = body.create<tensor::InsertOp>(l, zeroF, s1, k1r);
+        Value s3 = body.create<tensor::InsertOp>(l, zeroF, s2, k1i);
+        body.create<scf::YieldOp>(l, s3);
+      });
+  return loop.getResult(0);
+}
+
 // ---------------------------------------------------------------------------
 // Quantum function lowering
 //
@@ -273,6 +398,8 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
   llvm::DenseMap<Value, Value> veqToSv;
   // Map: original quake.ref SSA value → (parent veq SSA value, qubit index)
   llvm::DenseMap<Value, std::pair<Value, int64_t>> refInfo;
+  // Map: original quake.measure SSA value → lowered classical bit
+  llvm::DenseMap<Value, Value> measToBit;
 
   SmallVector<Operation *> toErase;
   Value finalSv; // last statevector tensor produced (returned from function)
@@ -322,8 +449,7 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         toErase.push_back(op);
 
       } else if (auto z = dyn_cast<quake::ZOp>(op)) {
-        if (!z.getControls().empty())
-          return op->emitError("controlled-Z not yet supported");
+        auto ctrls = z.getControls();
         Value ref = z.getTargets()[0];
         auto it = refInfo.find(ref);
         if (it == refInfo.end())
@@ -331,10 +457,32 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         auto [veq, qi] = it->second;
         int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
         Value sv = veqToSv[veq];
-        // Pauli-Z: [[1, 0], [0, -1]]
-        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
-            1.f, 0.f,  0.f, 0.f,
-            0.f, 0.f, -1.f, 0.f);
+        Value new_sv;
+        if (ctrls.empty()) {
+          // Pauli-Z: [[1, 0], [0, -1]]
+          new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+              1.f, 0.f,  0.f, 0.f,
+              0.f, 0.f, -1.f, 0.f);
+        } else if (ctrls.size() == 1) {
+          Value ctrlRef = ctrls[0];
+          auto cit = refInfo.find(ctrlRef);
+          if (cit == refInfo.end())
+            return op->emitError("CZ: control ref not found in refInfo");
+          if (cit->second.first != veq)
+            return op->emitError("CZ across different qvectors not yet supported");
+          int64_t ctrlQi = cit->second.second;
+          constexpr float k = 0.7071067811865476f; // 1/sqrt(2)
+          // CZ(c, t) = H(t); CNOT(c, t); H(t).
+          Value h0 = buildApplyUnitary(b, loc, sv, nQubits, qi,
+              k, 0.f,  k, 0.f,
+              k, 0.f, -k, 0.f);
+          Value cx = buildApplyCNOT(b, loc, h0, nQubits, ctrlQi, qi);
+          new_sv = buildApplyUnitary(b, loc, cx, nQubits, qi,
+              k, 0.f,  k, 0.f,
+              k, 0.f, -k, 0.f);
+        } else {
+          return op->emitError("Z with >1 controls not yet supported");
+        }
         veqToSv[veq] = new_sv;
         finalSv = new_sv;
         toErase.push_back(op);
@@ -551,6 +699,43 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         finalSv = new_sv;
         toErase.push_back(op);
 
+      } else if (auto mz = dyn_cast<quake::MzOp>(op)) {
+        if (mz.getTargets().size() != 1)
+          return op->emitError("Mz: only single-qubit measurement supported");
+        Value ref = mz.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("Mz: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        Value bit = buildMeasureZBit(b, loc, sv, nQubits, qi);
+        measToBit[mz.getMeasOut()] = bit;
+        toErase.push_back(op);
+
+      } else if (auto discr = dyn_cast<quake::DiscriminateOp>(op)) {
+        auto it = measToBit.find(discr.getMeasurement());
+        if (it == measToBit.end())
+          return op->emitError("Discriminate: measurement not found");
+        auto intTy = discr.getResult().getType().dyn_cast<IntegerType>();
+        if (!intTy || intTy.getWidth() != 1)
+          return op->emitError("Discriminate: only i1 results supported");
+        discr.getResult().replaceAllUsesWith(it->second);
+        toErase.push_back(op);
+
+      } else if (auto reset = dyn_cast<quake::ResetOp>(op)) {
+        Value ref = reset.getTargets();
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("Reset: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        Value new_sv = buildApplyReset(b, loc, sv, nQubits, qi);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
       } else if (isa<quake::DeallocOp>(op)) {
         toErase.push_back(op);
       }
@@ -565,8 +750,11 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
   if (!finalSv)
     return fn->emitError("no statevector produced — no quake.alloca found");
 
-  // Update the function to return the final statevector tensor.
   auto oldFnTy = fn.getFunctionType();
+  if (!oldFnTy.getResults().empty())
+    return success();
+
+  // Update void quantum functions to return the final statevector tensor.
   SmallVector<Type> newResults(oldFnTy.getResults().begin(),
                                oldFnTy.getResults().end());
   newResults.push_back(finalSv.getType());
@@ -621,7 +809,9 @@ struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
       if (isa<LLVM::LLVMFuncOp>(op)) {
         toErase.push_back(op);
       } else if (auto fn = dyn_cast<func::FuncOp>(op)) {
-        if (fn.isPrivate() && fn.empty())
+        if (fn->hasAttr("quake.cudaq_run") ||
+            fn.getSymName().ends_with(".run.entry") ||
+            (fn.isPrivate() && fn.empty()))
           toErase.push_back(fn);
       }
     });

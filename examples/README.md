@@ -22,6 +22,7 @@ Shared plumbing lives in `pipeline.py`:
 - `run_statevector_kernel` runs the common statevector-oriented workflow used
   by the example scripts.
 - `check_statevector` optionally checks sparse expected amplitudes.
+- `run_i1_kernel` runs kernels that return one classical `i1` result.
 
 Individual example scripts should stay focused on kernels and expectations.
 Avoid duplicating pipeline mechanics inside each script.

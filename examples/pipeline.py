@@ -33,6 +33,35 @@ def entrypoint_name(quake_ir: str) -> str | None:
     return m.group(1) if m else None
 
 
+def strip_cudaq_run_wrappers(quake_ir: str) -> str:
+    """Remove CUDA-Q .run helper functions that contain unsupported cc ops."""
+    output = []
+    skipping = False
+    brace_depth = 0
+
+    for line in quake_ir.splitlines():
+        starts_run_wrapper = (
+            "func.func @" in line and
+            (".run()" in line or ".run.entry()" in line)
+        )
+        if not skipping and starts_run_wrapper:
+            skipping = True
+            brace_depth = line.count("{") - line.count("}")
+            if brace_depth <= 0:
+                skipping = False
+            continue
+
+        if skipping:
+            brace_depth += line.count("{") - line.count("}")
+            if brace_depth <= 0:
+                skipping = False
+            continue
+
+        output.append(line)
+
+    return "\n".join(output) + "\n"
+
+
 def q2i_convert(input_file: Path, output_file: Path) -> subprocess.CompletedProcess:
     """Lower quake dialect to standard dialects via q2i-opt."""
     return subprocess.run(
@@ -120,6 +149,15 @@ def parse_iree_f32_vector(iree_output: str) -> list[float]:
     return []
 
 
+def parse_iree_bool(iree_output: str) -> bool | None:
+    """Extract a scalar boolean-like result from iree-run-module output."""
+    m = re.search(r"i(?:1|32)=(true|false|0|1)", iree_output)
+    if not m:
+        return None
+    value = m.group(1)
+    return value in ("true", "1")
+
+
 def print_statevector(iree_output: str, threshold: float = 1e-5):
     """Pretty-print a statevector from iree-run-module output.
 
@@ -203,7 +241,7 @@ def run_statevector_kernel(
     """
     banner(label)
 
-    quake_ir = emit_quake(kernel)
+    quake_ir = strip_cudaq_run_wrappers(emit_quake(kernel))
     func_name = entrypoint_name(quake_ir)
     if show_quake:
         show_ir("quake IR", quake_ir, max_lines=quake_max_lines)
@@ -258,5 +296,81 @@ def run_statevector_kernel(
         print_statevector(result.stdout)
         if expected is not None:
             return check_statevector(result.stdout, expected, atol=atol)
+
+    return True
+
+
+def run_i1_kernel(
+    kernel,
+    label: str,
+    *,
+    show_quake: bool = True,
+    show_lowered: bool = False,
+    quake_max_lines: int = 24,
+    lowered_max_lines: int = 60,
+    expected: bool | None = None,
+) -> bool:
+    """Run one CUDA-Q kernel that returns a scalar i1 classical result."""
+    banner(label)
+
+    quake_ir = strip_cudaq_run_wrappers(emit_quake(kernel))
+    func_name = entrypoint_name(quake_ir)
+    if show_quake:
+        show_ir("quake IR", quake_ir, max_lines=quake_max_lines)
+    step_ok("emit_quake", f"entrypoint = {func_name}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        quake_file = tmp_path / "kernel.mlir"
+        lowered_file = tmp_path / "kernel_lowered.mlir"
+        vmfb_file = tmp_path / "kernel.vmfb"
+
+        quake_file.write_text(quake_ir)
+
+        result = q2i_convert(quake_file, lowered_file)
+        if result.returncode != 0:
+            step_fail("q2i-opt --quake-to-standard", result.stderr)
+            print("\n  Pipeline stopped here - fix q2i-opt errors above to continue.")
+            return False
+        step_ok("q2i-opt --quake-to-standard")
+
+        if show_lowered:
+            lowered_ir = lowered_file.read_text()
+            show_ir("lowered MLIR (standard dialects)", lowered_ir,
+                    max_lines=lowered_max_lines)
+
+        try:
+            result = iree_compile(lowered_file, vmfb_file)
+        except RuntimeError as exc:
+            step_fail("iree-compile", str(exc))
+            return False
+        if result.returncode != 0:
+            step_fail("iree-compile", result.stderr)
+            print("\n  Pipeline stopped here - fix iree-compile errors above to continue.")
+            return False
+        step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
+
+        try:
+            result = iree_run(vmfb_file, func_name)
+        except RuntimeError as exc:
+            step_fail("iree-run-module", str(exc))
+            return False
+        if result.returncode != 0:
+            step_fail("iree-run-module", result.stderr)
+            return False
+        step_ok("iree-run-module")
+
+        print(f"\n  raw output:\n  {result.stdout.strip()}")
+        actual = parse_iree_bool(result.stdout)
+        if actual is None:
+            step_fail("check i1 result", "could not parse i1 result")
+            return False
+
+        print(f"\n  classical result: {actual}")
+        if expected is not None:
+            if actual != expected:
+                step_fail("check i1 result", f"expected {expected}, got {actual}")
+                return False
+            step_ok("check i1 result")
 
     return True

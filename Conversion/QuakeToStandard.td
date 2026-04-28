@@ -16,6 +16,7 @@ def QuakeToStandard : Pass<"quake-to-standard", "mlir::ModuleOp"> {
   let dependentDialects = [
     "mlir::arith::ArithDialect",
     "mlir::func::FuncDialect",
+    "mlir::math::MathDialect",
     "mlir::scf::SCFDialect",
     "mlir::tensor::TensorDialect",
     "quake::QuakeDialect",
