@@ -700,18 +700,26 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         toErase.push_back(op);
 
       } else if (auto mz = dyn_cast<quake::MzOp>(op)) {
-        if (mz.getTargets().size() != 1)
-          return op->emitError("Mz: only single-qubit measurement supported");
-        Value ref = mz.getTargets()[0];
-        auto it = refInfo.find(ref);
-        if (it == refInfo.end())
-          return op->emitError("Mz: target ref not found in refInfo");
-        auto [veq, qi] = it->second;
-        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
-        Value sv = veqToSv[veq];
-        Value bit = buildMeasureZBit(b, loc, sv, nQubits, qi);
-        measToBit[mz.getMeasOut()] = bit;
-        toErase.push_back(op);
+        // veq-level mz (sampling kernels): result is unused; statevector carries
+        // the full probability distribution — erase and let Python sample.
+        if (mz.getTargets().size() == 1 &&
+            mz.getTargets()[0].getType().isa<quake::VeqType>()) {
+          toErase.push_back(op);
+        } else {
+          // Single-qubit ref mz: compute deterministic bit from P(qubit=1) > 0.5.
+          if (mz.getTargets().size() != 1)
+            return op->emitError("Mz: only single-qubit measurement supported");
+          Value ref = mz.getTargets()[0];
+          auto it = refInfo.find(ref);
+          if (it == refInfo.end())
+            return op->emitError("Mz: target ref not found in refInfo");
+          auto [veq, qi] = it->second;
+          int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+          Value sv = veqToSv[veq];
+          Value bit = buildMeasureZBit(b, loc, sv, nQubits, qi);
+          measToBit[mz.getMeasOut()] = bit;
+          toErase.push_back(op);
+        }
 
       } else if (auto discr = dyn_cast<quake::DiscriminateOp>(op)) {
         auto it = measToBit.find(discr.getMeasurement());

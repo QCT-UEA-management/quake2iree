@@ -6,6 +6,7 @@ Display helpers (banner, show_ir, step_ok, step_fail) keep example scripts
 readable without duplicating formatting logic.
 """
 
+import random
 import re
 import shutil
 import subprocess
@@ -372,5 +373,128 @@ def run_i1_kernel(
                 step_fail("check i1 result", f"expected {expected}, got {actual}")
                 return False
             step_ok("check i1 result")
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Sampling helpers
+# ---------------------------------------------------------------------------
+
+def sample_from_statevector(
+    iree_output: str,
+    shots: int,
+    *,
+    seed: int | None = None,
+) -> dict[str, int]:
+    """Draw `shots` samples from the probability distribution of a statevector.
+
+    The statevector is flat interleaved f32: [re0, im0, re1, im1, ...].
+    p_k = re_k^2 + im_k^2.  Returns a bitstring → count histogram.
+    """
+    values = parse_iree_f32_vector(iree_output)
+    if not values or len(values) % 2 != 0:
+        return {}
+    n_complex = len(values) // 2
+    n_qubits = n_complex.bit_length() - 1
+    probs = [values[2 * k] ** 2 + values[2 * k + 1] ** 2 for k in range(n_complex)]
+    rng = random.Random(seed)
+    counts: dict[str, int] = {}
+    for k in rng.choices(range(n_complex), weights=probs, k=shots):
+        bits = format(k, f"0{n_qubits}b")
+        counts[bits] = counts.get(bits, 0) + 1
+    return counts
+
+
+def check_sample_counts(
+    counts: dict[str, int],
+    expected_keys: set[str],
+    shots: int,
+    *,
+    sigma: float = 5.0,
+) -> bool:
+    """Check that only expected bitstrings appear and each count is statistically plausible.
+
+    Uses a normal approximation: expected count ≈ shots / |expected_keys|,
+    tolerance = sigma * sqrt(p * (1-p) * shots) where p = 1 / |expected_keys|.
+    """
+    unexpected = set(counts.keys()) - expected_keys
+    if unexpected:
+        step_fail("check samples", f"unexpected bitstrings: {sorted(unexpected)}")
+        return False
+    p = 1.0 / len(expected_keys)
+    tol = sigma * (p * (1 - p) * shots) ** 0.5
+    expected_count = p * shots
+    ok = True
+    for key in expected_keys:
+        count = counts.get(key, 0)
+        if abs(count - expected_count) > tol:
+            step_fail(
+                "check samples",
+                f"|{key}⟩: got {count}, expected ≈{expected_count:.0f} ± {tol:.0f}",
+            )
+            ok = False
+    if ok:
+        step_ok("check samples", f"{shots} shots, {len(expected_keys)} outcomes")
+    return ok
+
+
+def run_sample_kernel(
+    kernel,
+    label: str,
+    shots: int,
+    *,
+    show_quake: bool = True,
+    quake_max_lines: int = 20,
+    expected_keys: set[str] | None = None,
+    seed: int | None = None,
+) -> bool:
+    """Run a CUDA-Q sampling kernel through the full pipeline and draw shots samples."""
+    banner(label)
+
+    quake_ir = strip_cudaq_run_wrappers(emit_quake(kernel))
+    func_name = entrypoint_name(quake_ir)
+    if show_quake:
+        show_ir("quake IR", quake_ir, max_lines=quake_max_lines)
+    step_ok("emit_quake", f"entrypoint = {func_name}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        quake_file = tmp_path / "kernel.mlir"
+        lowered_file = tmp_path / "kernel_lowered.mlir"
+        vmfb_file = tmp_path / "kernel.vmfb"
+
+        quake_file.write_text(quake_ir)
+
+        result = q2i_convert(quake_file, lowered_file)
+        if result.returncode != 0:
+            step_fail("q2i-opt --quake-to-standard", result.stderr)
+            return False
+        step_ok("q2i-opt --quake-to-standard")
+
+        try:
+            result = iree_compile(lowered_file, vmfb_file)
+        except RuntimeError as exc:
+            step_fail("iree-compile", str(exc))
+            return False
+        if result.returncode != 0:
+            step_fail("iree-compile", result.stderr)
+            return False
+        step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
+
+        try:
+            result = iree_run(vmfb_file, func_name)
+        except RuntimeError as exc:
+            step_fail("iree-run-module", str(exc))
+            return False
+        if result.returncode != 0:
+            step_fail("iree-run-module", result.stderr)
+            return False
+        step_ok("iree-run-module")
+
+        counts = sample_from_statevector(result.stdout, shots, seed=seed)
+        print(f"\n  samples ({shots} shots): {counts}")
+        if expected_keys is not None:
+            return check_sample_counts(counts, expected_keys, shots, sigma=5.0)
 
     return True
