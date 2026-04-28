@@ -303,6 +303,42 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         refInfo[exRef.getResult()] = {veq, qi};
         toErase.push_back(op);
 
+      } else if (auto y = dyn_cast<quake::YOp>(op)) {
+        if (!y.getControls().empty())
+          return op->emitError("controlled-Y not yet supported");
+        Value ref = y.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("Y gate: ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        // Pauli-Y: [[0, -i], [i, 0]]
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            0.f,  0.f,  0.f, -1.f,
+            0.f,  1.f,  0.f,  0.f);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto z = dyn_cast<quake::ZOp>(op)) {
+        if (!z.getControls().empty())
+          return op->emitError("controlled-Z not yet supported");
+        Value ref = z.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("Z gate: ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        // Pauli-Z: [[1, 0], [0, -1]]
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            1.f, 0.f,  0.f, 0.f,
+            0.f, 0.f, -1.f, 0.f);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
       } else if (auto h = dyn_cast<quake::HOp>(op)) {
         if (!h.getControls().empty())
           return op->emitError("controlled-H not yet supported");
@@ -348,6 +384,79 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         } else {
           return op->emitError("X with >1 controls not yet supported");
         }
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto rx = dyn_cast<quake::RxOp>(op)) {
+        if (!rx.getControls().empty())
+          return op->emitError("controlled-Rx not yet supported");
+        Value angleVal = rx.getParameters()[0];
+        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
+        if (!cstOp)
+          return op->emitError("Rx: only constant angles supported");
+        double theta = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+        double c = std::cos(theta / 2.0), s = std::sin(theta / 2.0);
+        Value ref = rx.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("Rx: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        // RX(θ) = [[cos(θ/2), -i·sin(θ/2)], [-i·sin(θ/2), cos(θ/2)]]
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            (float)c, 0.f,       0.f, (float)-s,
+            0.f,      (float)-s, (float)c, 0.f);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto ry = dyn_cast<quake::RyOp>(op)) {
+        if (!ry.getControls().empty())
+          return op->emitError("controlled-Ry not yet supported");
+        Value angleVal = ry.getParameters()[0];
+        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
+        if (!cstOp)
+          return op->emitError("Ry: only constant angles supported");
+        double theta = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+        double c = std::cos(theta / 2.0), s = std::sin(theta / 2.0);
+        Value ref = ry.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("Ry: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        // RY(θ) = [[cos(θ/2), -sin(θ/2)], [sin(θ/2), cos(θ/2)]]
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            (float)c,  0.f, (float)-s, 0.f,
+            (float)s,  0.f, (float)c,  0.f);
+        veqToSv[veq] = new_sv;
+        finalSv = new_sv;
+        toErase.push_back(op);
+
+      } else if (auto rz = dyn_cast<quake::RzOp>(op)) {
+        if (!rz.getControls().empty())
+          return op->emitError("controlled-Rz not yet supported");
+        Value angleVal = rz.getParameters()[0];
+        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
+        if (!cstOp)
+          return op->emitError("Rz: only constant angles supported");
+        double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+        double c = std::cos(lam / 2.0), s = std::sin(lam / 2.0);
+        Value ref = rz.getTargets()[0];
+        auto it = refInfo.find(ref);
+        if (it == refInfo.end())
+          return op->emitError("Rz: target ref not found in refInfo");
+        auto [veq, qi] = it->second;
+        int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
+        Value sv = veqToSv[veq];
+        // RZ(λ) = [[exp(-iλ/2), 0], [0, exp(iλ/2)]]
+        //       = [[cos-i·sin, 0], [0, cos+i·sin]]
+        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+            (float)c, (float)-s,  0.f, 0.f,
+            0.f,      0.f,        (float)c, (float)s);
         veqToSv[veq] = new_sv;
         finalSv = new_sv;
         toErase.push_back(op);
