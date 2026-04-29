@@ -34,30 +34,23 @@ This will create the `build/` directory, configure the project with CMake and Ni
 
 ## Running the tests
 
-The test suite uses Python's built-in `unittest` framework and lives in the `test/` directory. MLIR test inputs live in `test/data/` so the test modules stay separate from the sample IR files.
+The test suite uses [pytest](https://pytest.org) and lives in
+`test/test_circuits.py`. It drives real CUDA-Q kernels through the full
+conversion pipeline and checks statevector outputs and sampling distributions.
 
-The recommended way to run all tests is from the repository root:
-
-```bash
-./test.sh
-```
-
-This script expects the project to be built first with `./build.sh`. It runs unittest discovery over the `test/` directory and disables Python bytecode writes so test runs do not update `__pycache__` files.
-
-There are currently two test modules:
-
-* `test/test_mlir_conversion.py` runs `q2i-opt --quake-to-standard` on Quake dialect MLIR inputs from `test/data/` and checks that conversion succeeds.
-* `test/test_iree_compile.py` checks that lowered MLIR inputs from `test/data/` compile with `iree-compile`, checks the end-to-end path from Quake input to lowered MLIR to IREE bytecode, and runs no-argument compiled modules with `iree-run-module`.
-
-The IREE tests require `iree-compile` and `iree-run-module` to be available in `PATH`. If it is not installed, those tests are skipped by unittest.
-
-You can also run individual test modules directly:
+Build the project first, then run:
 
 ```bash
-cd test
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_mlir_conversion -v
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest test_iree_compile -v
+python3 -m pytest test/test_circuits.py -v
 ```
+
+For a quieter run (just pass/fail summary):
+
+```bash
+python3 -m pytest test/test_circuits.py -q
+```
+
+There are 20 tests across 8 classes covering Bell state, GHZ, rotations, phase gates, SWAP, measurements, reset, controlled-Z, and sampling.
 
 ## Pipeline examples
 
@@ -86,13 +79,7 @@ python3 examples/01_bell.py
 ```
 
 Each script prints the intermediate IR at every stage and stops with a
-descriptive error at the first failure, so you can immediately see where the
-pipeline breaks and why.
-
-### Current examples
-
-* `examples/01_bell.py` — Bell state (H + CNOT on two qubits). Currently
-  fails at `q2i-opt` because `quake.h` has no lowering pattern yet.
+descriptive error at the first failure, so you can immediately see where the pipeline breaks and why.
 
 ## Contribution Guidelines
 
