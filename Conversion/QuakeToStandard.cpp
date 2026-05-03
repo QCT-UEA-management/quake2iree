@@ -64,15 +64,14 @@ static Value buildInitStatevector(OpBuilder &b, Location loc, int64_t nQubits) {
 // arith.index_cast(arith.ori / arith.shli).
 // ---------------------------------------------------------------------------
 
-// Apply 2×2 unitary [[u00,u01],[u10,u11]] to qubit `qubitIdx` of `sv`.
-static Value buildApplyUnitary(OpBuilder &b, Location loc, Value sv,
-                               int64_t nQubits, int64_t qubitIdx,
-                               float u00r, float u00i,
-                               float u01r, float u01i,
-                               float u10r, float u10i,
-                               float u11r, float u11i) {
-  MLIRContext *ctx = b.getContext();
-  auto f32Ty = Float32Type::get(ctx);
+// Apply 2×2 unitary with f32 SSA Value matrix entries.
+// Used by both constant gates (via buildApplyUnitary) and parametric gates.
+static Value buildApplyUnitaryV(OpBuilder &b, Location loc, Value sv,
+                                int64_t nQubits, int64_t qubitIdx,
+                                Value U00r, Value U00i,
+                                Value U01r, Value U01i,
+                                Value U10r, Value U10i,
+                                Value U11r, Value U11i) {
   auto i64Ty = b.getI64Type();
   auto idxTy = b.getIndexType();
 
@@ -83,24 +82,12 @@ static Value buildApplyUnitary(OpBuilder &b, Location loc, Value sv,
   Value c1  = b.create<arith::ConstantIndexOp>(loc, 1);
   Value nP  = b.create<arith::ConstantIndexOp>(loc, nPairs);
 
-  // Matrix constants (captured as Value in lambda — const-safe)
-  Value U00r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u00r));
-  Value U00i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u00i));
-  Value U01r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u01r));
-  Value U01i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u01i));
-  Value U10r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u10r));
-  Value U10i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u10i));
-  Value U11r = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u11r));
-  Value U11i = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, u11i));
+  Value qi_64  = b.create<arith::ConstantIntOp>(loc, qubitIdx, i64Ty);
+  Value c1_64  = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
+  Value stride = b.create<arith::ShLIOp>(loc, c1_64, qi_64);   // 1 << qi
+  Value lmask  = b.create<arith::SubIOp>(loc, stride, c1_64);  // stride - 1
+  Value qp1    = b.create<arith::AddIOp>(loc, qi_64, c1_64);   // qi + 1
 
-  // i64 constants for bit arithmetic (captured as Value)
-  Value qi_64    = b.create<arith::ConstantIntOp>(loc, qubitIdx, i64Ty);
-  Value c1_64    = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
-  Value stride   = b.create<arith::ShLIOp>(loc, c1_64, qi_64);   // 1 << qi
-  Value lmask    = b.create<arith::SubIOp>(loc, stride, c1_64);  // stride - 1
-  Value qp1      = b.create<arith::AddIOp>(loc, qi_64, c1_64);   // qi + 1
-
-  // scf.for carries the statevector tensor as iter_arg
   auto loop = b.create<scf::ForOp>(
       loc, c0, nP, c1, ValueRange{sv},
       [U00r, U00i, U01r, U01i, U10r, U10i, U11r, U11i,
@@ -108,14 +95,13 @@ static Value buildApplyUnitary(OpBuilder &b, Location loc, Value sv,
       (OpBuilder &body, Location l, Value j, ValueRange iters) {
         Value sv_cur = iters[0];
 
-        // Compute complex pair indices k0 (bit-qi=0) and k1 = k0 | stride
-        // using addi instead of ori (bits are non-overlapping)
+        // Compute pair indices k0 (qubit-bit = 0) and k1 = k0 + stride
         Value j64   = body.create<arith::IndexCastOp>(l, i64Ty, j);
         Value lower = body.create<arith::AndIOp>(l, j64, lmask);
         Value uHalf = body.create<arith::ShRUIOp>(l, j64, qi_64);
         Value upper = body.create<arith::ShLIOp>(l, uHalf, qp1);
-        Value k0_64 = body.create<arith::AddIOp>(l, upper, lower); // addi
-        Value k1_64 = body.create<arith::AddIOp>(l, k0_64, stride); // addi
+        Value k0_64 = body.create<arith::AddIOp>(l, upper, lower);
+        Value k1_64 = body.create<arith::AddIOp>(l, k0_64, stride);
 
         // f32 indices: 2*k, 2*k+1
         Value k0r_64 = body.create<arith::ShLIOp>(l, k0_64, c1_64);
@@ -175,6 +161,22 @@ static Value buildApplyUnitary(OpBuilder &b, Location loc, Value sv,
         body.create<scf::YieldOp>(l, s3);
       });
   return loop.getResult(0);
+}
+
+// Convenience wrapper: create f32 constants from compile-time floats.
+static Value buildApplyUnitary(OpBuilder &b, Location loc, Value sv,
+                               int64_t nQubits, int64_t qubitIdx,
+                               float u00r, float u00i,
+                               float u01r, float u01i,
+                               float u10r, float u10i,
+                               float u11r, float u11i) {
+  auto f32Ty = Float32Type::get(b.getContext());
+  auto mk = [&](float v) -> Value {
+    return b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, v));
+  };
+  return buildApplyUnitaryV(b, loc, sv, nQubits, qubitIdx,
+      mk(u00r), mk(u00i), mk(u01r), mk(u01i),
+      mk(u10r), mk(u10i), mk(u11r), mk(u11i));
 }
 
 // Apply CNOT: flip qubit `tgtIdx` when qubit `ctrlIdx` is |1>.
@@ -374,6 +376,34 @@ static Value buildApplyReset(OpBuilder &b, Location loc, Value sv,
         body.create<scf::YieldOp>(l, s3);
       });
   return loop.getResult(0);
+}
+
+// ---------------------------------------------------------------------------
+// Rotation angle helpers
+//
+// Rotation gates accept either a compile-time arith.constant (constant path:
+// trig folded at conversion time) or a runtime f64 SSA value, e.g. a function
+// argument (dynamic path: math.cos/sin emitted into the IR).
+// ---------------------------------------------------------------------------
+
+// Ensure v is f64; extend from f32 if necessary.
+static Value asF64(OpBuilder &b, Location loc, Value v) {
+  auto f64Ty = b.getF64Type();
+  if (v.getType() == f64Ty)
+    return v;
+  return b.create<arith::ExtFOp>(loc, f64Ty, v);
+}
+
+// Build runtime cos/sin Values truncated to f32.
+// `angle` must already be f64. Returns {cos(angle), sin(angle)} as f32.
+static std::pair<Value, Value> buildCosSin(OpBuilder &b, Location loc,
+                                           Value angle) {
+  auto f32Ty = Float32Type::get(b.getContext());
+  Value c64 = b.create<math::CosOp>(loc, angle);
+  Value s64 = b.create<math::SinOp>(loc, angle);
+  Value c   = b.create<arith::TruncFOp>(loc, f32Ty, c64);
+  Value s   = b.create<arith::TruncFOp>(loc, f32Ty, s64);
+  return {c, s};
 }
 
 // ---------------------------------------------------------------------------
@@ -602,13 +632,6 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         if (!r1.getControls().empty())
           return op->emitError("controlled-R1 not yet supported");
         Value angleVal = r1.getParameters()[0];
-        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
-        if (!cstOp)
-          return op->emitError("R1: only constant angles supported");
-        double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
-        if (r1.isAdj())
-          lam *= -1.0;
-        double c = std::cos(lam), s = std::sin(lam);
         Value ref = r1.getTargets()[0];
         auto it = refInfo.find(ref);
         if (it == refInfo.end())
@@ -616,10 +639,34 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         auto [veq, qi] = it->second;
         int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
         Value sv = veqToSv[veq];
-        // R1(lambda) = [[1, 0], [0, exp(i*lambda)]]
-        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
-            1.f, 0.f,       0.f, 0.f,
-            0.f, 0.f, (float)c, (float)s);
+        Value new_sv;
+        if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+          // Constant path: fold trig at conversion time.
+          double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+          if (r1.isAdj()) lam *= -1.0;
+          double c = std::cos(lam), s = std::sin(lam);
+          // R1(λ) = [[1, 0], [0, exp(iλ)]]
+          new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+              1.f, 0.f,       0.f, 0.f,
+              0.f, 0.f, (float)c, (float)s);
+        } else {
+          // Dynamic path: runtime angle via math.cos / math.sin.
+          auto f64Ty = b.getF64Type();
+          auto f32Ty = Float32Type::get(b.getContext());
+          Value lam = asF64(b, loc, angleVal);
+          if (r1.isAdj()) {
+            Value neg1 = b.create<arith::ConstantOp>(
+                loc, FloatAttr::get(f64Ty, -1.0));
+            lam = b.create<arith::MulFOp>(loc, lam, neg1);
+          }
+          auto [c, s] = buildCosSin(b, loc, lam);
+          Value zero = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
+          Value one  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 1.f));
+          // R1(λ) = [[1, 0], [0, c+i·s]]
+          new_sv = buildApplyUnitaryV(b, loc, sv, nQubits, qi,
+              one, zero, zero, zero,
+              zero, zero, c, s);
+        }
         veqToSv[veq] = new_sv;
         finalSv = new_sv;
         toErase.push_back(op);
@@ -628,11 +675,6 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         if (!rx.getControls().empty())
           return op->emitError("controlled-Rx not yet supported");
         Value angleVal = rx.getParameters()[0];
-        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
-        if (!cstOp)
-          return op->emitError("Rx: only constant angles supported");
-        double theta = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
-        double c = std::cos(theta / 2.0), s = std::sin(theta / 2.0);
         Value ref = rx.getTargets()[0];
         auto it = refInfo.find(ref);
         if (it == refInfo.end())
@@ -640,10 +682,28 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         auto [veq, qi] = it->second;
         int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
         Value sv = veqToSv[veq];
-        // RX(θ) = [[cos(θ/2), -i·sin(θ/2)], [-i·sin(θ/2), cos(θ/2)]]
-        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
-            (float)c, 0.f,       0.f, (float)-s,
-            0.f,      (float)-s, (float)c, 0.f);
+        Value new_sv;
+        if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+          // Constant path: fold trig at conversion time.
+          double theta = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+          double c = std::cos(theta / 2.0), s = std::sin(theta / 2.0);
+          // RX(θ) = [[cos(θ/2), -i·sin(θ/2)], [-i·sin(θ/2), cos(θ/2)]]
+          new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+              (float)c, 0.f,       0.f, (float)-s,
+              0.f,      (float)-s, (float)c, 0.f);
+        } else {
+          // Dynamic path: runtime angle via math.cos / math.sin.
+          auto f64Ty = b.getF64Type();
+          auto f32Ty = Float32Type::get(b.getContext());
+          Value half  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f64Ty, 0.5));
+          Value ht    = b.create<arith::MulFOp>(loc, asF64(b, loc, angleVal), half);
+          auto [c, s] = buildCosSin(b, loc, ht);
+          Value zero  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
+          Value ns    = b.create<arith::NegFOp>(loc, s);
+          // RX(θ) = [[c, -i·s], [-i·s, c]]
+          new_sv = buildApplyUnitaryV(b, loc, sv, nQubits, qi,
+              c, zero, zero, ns, zero, ns, c, zero);
+        }
         veqToSv[veq] = new_sv;
         finalSv = new_sv;
         toErase.push_back(op);
@@ -652,11 +712,6 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         if (!ry.getControls().empty())
           return op->emitError("controlled-Ry not yet supported");
         Value angleVal = ry.getParameters()[0];
-        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
-        if (!cstOp)
-          return op->emitError("Ry: only constant angles supported");
-        double theta = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
-        double c = std::cos(theta / 2.0), s = std::sin(theta / 2.0);
         Value ref = ry.getTargets()[0];
         auto it = refInfo.find(ref);
         if (it == refInfo.end())
@@ -664,10 +719,28 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         auto [veq, qi] = it->second;
         int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
         Value sv = veqToSv[veq];
-        // RY(θ) = [[cos(θ/2), -sin(θ/2)], [sin(θ/2), cos(θ/2)]]
-        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
-            (float)c,  0.f, (float)-s, 0.f,
-            (float)s,  0.f, (float)c,  0.f);
+        Value new_sv;
+        if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+          // Constant path: fold trig at conversion time.
+          double theta = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+          double c = std::cos(theta / 2.0), s = std::sin(theta / 2.0);
+          // RY(θ) = [[cos(θ/2), -sin(θ/2)], [sin(θ/2), cos(θ/2)]]
+          new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+              (float)c,  0.f, (float)-s, 0.f,
+              (float)s,  0.f, (float)c,  0.f);
+        } else {
+          // Dynamic path: runtime angle via math.cos / math.sin.
+          auto f64Ty = b.getF64Type();
+          auto f32Ty = Float32Type::get(b.getContext());
+          Value half  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f64Ty, 0.5));
+          Value ht    = b.create<arith::MulFOp>(loc, asF64(b, loc, angleVal), half);
+          auto [c, s] = buildCosSin(b, loc, ht);
+          Value zero  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
+          Value ns    = b.create<arith::NegFOp>(loc, s);
+          // RY(θ) = [[c, -s], [s, c]]
+          new_sv = buildApplyUnitaryV(b, loc, sv, nQubits, qi,
+              c, zero, ns, zero, s, zero, c, zero);
+        }
         veqToSv[veq] = new_sv;
         finalSv = new_sv;
         toErase.push_back(op);
@@ -676,11 +749,6 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         if (!rz.getControls().empty())
           return op->emitError("controlled-Rz not yet supported");
         Value angleVal = rz.getParameters()[0];
-        auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>();
-        if (!cstOp)
-          return op->emitError("Rz: only constant angles supported");
-        double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
-        double c = std::cos(lam / 2.0), s = std::sin(lam / 2.0);
         Value ref = rz.getTargets()[0];
         auto it = refInfo.find(ref);
         if (it == refInfo.end())
@@ -688,11 +756,29 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         auto [veq, qi] = it->second;
         int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
         Value sv = veqToSv[veq];
-        // RZ(λ) = [[exp(-iλ/2), 0], [0, exp(iλ/2)]]
-        //       = [[cos-i·sin, 0], [0, cos+i·sin]]
-        Value new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
-            (float)c, (float)-s,  0.f, 0.f,
-            0.f,      0.f,        (float)c, (float)s);
+        Value new_sv;
+        if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+          // Constant path: fold trig at conversion time.
+          double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+          double c = std::cos(lam / 2.0), s = std::sin(lam / 2.0);
+          // RZ(λ) = [[exp(-iλ/2), 0], [0, exp(iλ/2)]]
+          //       = [[cos-i·sin, 0], [0, cos+i·sin]]
+          new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
+              (float)c, (float)-s,  0.f, 0.f,
+              0.f,      0.f,        (float)c, (float)s);
+        } else {
+          // Dynamic path: runtime angle via math.cos / math.sin.
+          auto f64Ty = b.getF64Type();
+          auto f32Ty = Float32Type::get(b.getContext());
+          Value half  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f64Ty, 0.5));
+          Value ht    = b.create<arith::MulFOp>(loc, asF64(b, loc, angleVal), half);
+          auto [c, s] = buildCosSin(b, loc, ht);
+          Value zero  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
+          Value ns    = b.create<arith::NegFOp>(loc, s);
+          // RZ(λ) = [[c-i·s, 0], [0, c+i·s]]
+          new_sv = buildApplyUnitaryV(b, loc, sv, nQubits, qi,
+              c, ns, zero, zero, zero, zero, c, s);
+        }
         veqToSv[veq] = new_sv;
         finalSv = new_sv;
         toErase.push_back(op);

@@ -90,17 +90,23 @@ def iree_compile(
     )
 
 
-def iree_run(vmfb_file: Path, function: str) -> subprocess.CompletedProcess:
-    """Execute a compiled IREE module."""
+def iree_run(
+    vmfb_file: Path,
+    function: str,
+    args: list[str] | None = None,
+) -> subprocess.CompletedProcess:
+    """Execute a compiled IREE module.
+
+    `args` is a list of --input values, e.g. ["3.14159::f64", "1.5707::f64"]
+    for parametric kernels with runtime f64 arguments.
+    """
     tool = shutil.which("iree-run-module")
     if not tool:
         raise RuntimeError("iree-run-module not found in PATH")
-    return subprocess.run(
-        [tool, f"--module={vmfb_file}", f"--function={function}"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    cmd = [tool, f"--module={vmfb_file}", f"--function={function}"]
+    if args:
+        cmd += [f"--input={a}" for a in args]
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +232,7 @@ def run_statevector_kernel(
     kernel,
     label: str,
     *,
+    kernel_args: list | None = None,
     show_quake: bool = True,
     show_lowered: bool = False,
     quake_max_lines: int = 20,
@@ -279,8 +286,9 @@ def run_statevector_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
+        iree_args = [f"{v}::f64" for v in kernel_args] if kernel_args else None
         try:
-            result = iree_run(vmfb_file, func_name)
+            result = iree_run(vmfb_file, func_name, args=iree_args)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False
@@ -305,6 +313,7 @@ def run_i1_kernel(
     kernel,
     label: str,
     *,
+    kernel_args: list | None = None,
     show_quake: bool = True,
     show_lowered: bool = False,
     quake_max_lines: int = 24,
@@ -351,8 +360,9 @@ def run_i1_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
+        iree_args = [f"{v}::f64" for v in kernel_args] if kernel_args else None
         try:
-            result = iree_run(vmfb_file, func_name)
+            result = iree_run(vmfb_file, func_name, args=iree_args)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False

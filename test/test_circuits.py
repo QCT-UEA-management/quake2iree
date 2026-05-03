@@ -1,11 +1,20 @@
+# ============================================================================ #
+# Copyright (c) 2022 - 2026 NVIDIA Corporation & Affiliates.                   #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
 """
-Full-pipeline regression tests — mirrors examples/01–09.
+Full-pipeline regression tests — mirrors examples/01–10.
 
 Kernels are defined at module level (cudaq.kernel requires source inspection).
 Pipeline helpers are called with show_quake=False so pytest output stays clean;
 captured output is only surfaced when a test fails, providing debug context.
 
 Sampling tests use a fixed seed for deterministic counts across runs.
+Parametric tests pass runtime f64 angles via kernel_args.
 """
 
 import math
@@ -285,4 +294,95 @@ class TestSampling:
     def test_ghz_sample(self):
         assert run_sample_kernel(
             ghz_sample, "ghz_sample", 1000, expected_keys={"000", "111"}, **_SA
+        )
+
+
+# 10 Parametric kernels
+
+@cudaq.kernel
+def rx_param(theta: float):
+    q = cudaq.qvector(1)
+    rx(theta, q[0])
+
+
+@cudaq.kernel
+def ry_param(theta: float):
+    q = cudaq.qvector(1)
+    ry(theta, q[0])
+
+
+@cudaq.kernel
+def rz_param(lam: float):
+    q = cudaq.qvector(1)
+    h(q[0])
+    rz(lam, q[0])
+
+
+@cudaq.kernel
+def r1_param(lam: float):
+    q = cudaq.qvector(1)
+    h(q[0])
+    r1(lam, q[0])
+
+
+@cudaq.kernel
+def ansatz_param(theta: float, phi: float):
+    q = cudaq.qvector(2)
+    ry(theta, q[0])
+    rx(phi, q[1])
+    cx(q[0], q[1])
+
+
+class TestParametric:
+    def test_rx_pi(self):
+        assert run_statevector_kernel(
+            rx_param, "rx_param(π)",
+            kernel_args=[math.pi],
+            expected={1: -1j},
+            **_SV,
+        )
+
+    def test_ry_half_pi(self):
+        k = 1 / math.sqrt(2)
+        assert run_statevector_kernel(
+            ry_param, "ry_param(π/2)",
+            kernel_args=[math.pi / 2],
+            expected={0: k, 1: k},
+            **_SV,
+        )
+
+    def test_rz_half_pi(self):
+        assert run_statevector_kernel(
+            rz_param, "rz_param(π/2)",
+            kernel_args=[math.pi / 2],
+            expected={0: 0.5 - 0.5j, 1: 0.5 + 0.5j},
+            **_SV,
+        )
+
+    def test_r1_third_pi(self):
+        k = 1 / math.sqrt(2)
+        lam = math.pi / 3
+        assert run_statevector_kernel(
+            r1_param, "r1_param(π/3)",
+            kernel_args=[lam],
+            expected={0: k, 1: complex(k * math.cos(lam), k * math.sin(lam))},
+            **_SV,
+        )
+
+    def test_ansatz_two_params(self):
+        theta, phi = math.pi / 4, math.pi / 3
+        cy  = math.cos(theta / 2)
+        cy_ = math.sin(theta / 2)
+        cx_ = math.cos(phi / 2)
+        sx_ = math.sin(phi / 2)
+        assert run_statevector_kernel(
+            ansatz_param, "ansatz_param(π/4, π/3)",
+            kernel_args=[theta, phi],
+            expected={
+                0: complex(cy  * cx_,  0),
+                1: complex(0,  -cy_ * sx_),
+                2: complex(0,  -cy  * sx_),
+                3: complex(cy_ * cx_,  0),
+            },
+            **_SV,
         )
