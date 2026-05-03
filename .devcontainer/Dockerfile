@@ -19,6 +19,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server \
+        doxygen \
+        graphviz \
     && rm -rf /var/lib/apt/lists/* \
     # Create the privilege-separation directory required by sshd
     && mkdir -p /var/run/sshd \
