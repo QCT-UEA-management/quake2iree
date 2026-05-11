@@ -32,6 +32,7 @@ add_mlir_library(QuakeToStandard
     MLIRFuncTransforms  
     MLIRIR  
     MLIRMemRefDialect  
+    MLIRMathDialect  
     MLIRPass  
     MLIRSCFDialect  
     MLIRTensorDialect  

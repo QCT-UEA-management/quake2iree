@@ -7,17 +7,21 @@ include_directories(
 
 
 set (LIBS
-  CCDialect     
+  CCDialect
   QuakeDialect         # <== Your dialect
-  QuakeToStandard      # <== Your pass  
+  QuakeToStandard      # <== Your pass
   QuakeCommon
   MLIRSupport
   MLIRParser
   MLIRPass
   MLIRTransforms
   MLIRDialect
-  MLIRFuncDialect
   MLIRArithDialect
+  MLIRComplexDialect
+  MLIRFuncDialect
+  MLIRLLVMDialect
+  MLIRMemRefDialect
+  MLIRSCFDialect
   MLIRTensorDialect
   MLIRMlirOptMain
   MLIRIR

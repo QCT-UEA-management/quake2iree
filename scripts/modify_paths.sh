@@ -1,96 +1,53 @@
-# ============================================================================ #
-# Copyright (c) 2022 - 2025 NVIDIA Corporation & Affiliates.                   #
-# All rights reserved.                                                         #
-#                                                                              #
-# This source code and the accompanying materials are made available under     #
-# the terms of the Apache License 2.0 which accompanies this distribution.     #
-# ============================================================================ #
-
 #!/bin/bash
-set -e
+# Rewrite upstream include paths inside a staging directory.
+#
+# Usage:
+#   bash scripts/modify_paths.sh <staging-dir>
+#
+# Rules (applied in order — rule 1 creates the precondition for rule 4):
+#   1. "cudaq/Optimizer/...  →  "...          (strips namespace prefix from all dialect headers)
+#   2. "cudaq/Support/SmallVector.h"  →  "Dialect/Quake/SmallVector.h"
+#   3. "cudaq/Frontend/nvqpp/AttributeNames.h"  →  "Dialect/Common/AttributeNames.h"
+#   4. "Builder/Factory.h"  →  "Dialect/Quake/Factory.h"   (after rule 1 stripped "Optimizer/")
 
+set -euo pipefail
 
-QUAKE_DIR="../Dialect/Quake"
-COMMON_DIR="../Dialect/Common"
-CC_DIR="../Dialect/CC"
+STAGING="${1:?Usage: $0 <staging-dir>}"
 
+if [ ! -d "$STAGING" ]; then
+  echo "ERROR: staging directory not found: $STAGING"
+  exit 1
+fi
 
-echo "Transforming files in $QUAKE_DIR"
-
-# Detect platform and set sed flags accordingly
+# Cross-platform sed
 if [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS requires an empty string for -i backup
   SED_CMD=(sed -i '')
 else
-  # Linux allows -i without backup suffix
   SED_CMD=(sed -i)
 fi
 
-# 1
-TARGET_STRING='"cudaq/Optimizer/'
-REPLACEMENT_STRING='"'
+FILES=()
+while IFS= read -r -d '' f; do
+  FILES+=("$f")
+done < <(find "$STAGING" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -print0)
 
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" \
-  "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+if [ "${#FILES[@]}" -eq 0 ]; then
+  echo "ERROR: no .cpp/.h/.td files found in $STAGING"
+  exit 1
+fi
 
+echo "    Rewriting ${#FILES[@]} files in $STAGING"
 
-find "$CC_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" \
-  "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+# Rule 1: strip "cudaq/Optimizer/" prefix from all include paths
+"${SED_CMD[@]}" 's|"cudaq/Optimizer/|"|g' "${FILES[@]}"
 
+# Rule 2: SmallVector support header
+"${SED_CMD[@]}" 's|"cudaq/Support/SmallVector\.h"|"Dialect/Quake/SmallVector.h"|g' "${FILES[@]}"
 
+# Rule 3: AttributeNames (lives in Frontend/nvqpp/ upstream, maps to Dialect/Common/ here)
+"${SED_CMD[@]}" 's|"cudaq/Frontend/nvqpp/AttributeNames\.h"|"Dialect/Common/AttributeNames.h"|g' "${FILES[@]}"
 
-# Specific changes
-TARGET_DIR="../Dialect/Common"
-TARGET_STRING='#include "cudaq/Frontend/nvqpp/AttributeNames.h"'
-REPLACEMENT_STRING='#include "Dialect/Common/AttributeNames.h"'
-find "$TARGET_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
+# Rule 4: Factory.h (after rule 1 stripped "Optimizer/", it now reads "Builder/Factory.h")
+"${SED_CMD[@]}" 's|"Builder/Factory\.h"|"Dialect/Quake/Factory.h"|g' "${FILES[@]}"
 
-
-# Define the target and replacement
-TARGET_STRING='#include "cudaq/Support/SmallVector.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/SmallVector.h"'
-
-# Apply to both directories
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) \
-    -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-find "$CC_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) \
-    -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-
-# Specific changes
-TARGET_STRING='#include "Builder/Factory.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/Factory.h"'
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-find "$CC_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-# Specific changes
-TARGET_STRING='#include "Builder/Intrinsics.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/Intrinsics.h"'
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-TARGET_STRING='#include "Builder/Runtime.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/Runtime.h"'
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-TARGET_STRING='#include "CodeGen/CudaqFunctionNames.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/CudaqFunctionNames.h"'
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-
-TARGET_STRING='#include "cudaq/Frontend/nvqpp/AttributeNames.h"'
-REPLACEMENT_STRING='#include "Dialect/Common/AttributeNames.h"'
-find "$COMMON_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-
-TARGET_STRING='#include "CodeGen/QIRFunctionNames.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/QIRFunctionNames.h"'
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-TARGET_STRING='#include "CodeGen/QIROpaqueStructTypes.h"'
-REPLACEMENT_STRING='#include "Dialect/Quake/QIROpaqueStructTypes.h"'
-find "$QUAKE_DIR" -type f \( -name "*.cpp" -o -name "*.h" -o -name "*.td" \) -exec "${SED_CMD[@]}" "s|$TARGET_STRING|$REPLACEMENT_STRING|g" {} +
-
-
-
-echo "All matching includes transformed successfully."
+echo "    Include paths rewritten."
