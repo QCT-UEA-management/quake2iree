@@ -1,3 +1,11 @@
+# ============================================================================ #
+# Copyright (c) 2022 - 2026 NVIDIA Corporation & Affiliates.                   #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
 """Shared plumbing for quake2iree examples.
 
 Each helper wraps one pipeline stage and returns a CompletedProcess so the
@@ -6,6 +14,7 @@ Display helpers (banner, show_ir, step_ok, step_fail) keep example scripts
 readable without duplicating formatting logic.
 """
 
+import re
 import random
 import shutil
 import subprocess
@@ -20,6 +29,21 @@ from q2i.lowering import (  # noqa: F401 — re-exported for example scripts
 )
 
 IREE_BACKEND = "llvm-cpu"
+
+
+def _nqubits_from_quake(quake_ir: str) -> int | None:
+    """Extract the qubit count from the first quake.alloca in the IR."""
+    m = re.search(r'quake\.alloca !quake\.veq<(\d+)>', quake_ir)
+    return int(m.group(1)) if m else None
+
+
+def _init_sv_input(n_qubits: int) -> str:
+    """Build the iree-run-module --input value for |00...0⟩.
+
+    Format: '<N>xf32=1 0 0 ... 0'  (2·2^n floats, first=1, rest=0).
+    """
+    n_f32 = 2 * (1 << n_qubits)
+    return f"{n_f32}xf32=1 " + " ".join(["0"] * (n_f32 - 1))
 
 
 def iree_compile(
@@ -235,9 +259,13 @@ def run_statevector_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
-        iree_args = [f"{v}::f64" for v in kernel_args] if kernel_args else None
+        # The sv arg is appended after existing kernel args, so order: kernel_args then sv.
+        n_qubits = _nqubits_from_quake(quake_ir)
+        iree_args: list[str] = [f"{v}::f64" for v in kernel_args] if kernel_args else []
+        if n_qubits is not None:
+            iree_args.append(_init_sv_input(n_qubits))
         try:
-            result = iree_run(vmfb_file, func_name, args=iree_args)
+            result = iree_run(vmfb_file, func_name, args=iree_args or None)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False
@@ -309,9 +337,12 @@ def run_i1_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
-        iree_args = [f"{v}::f64" for v in kernel_args] if kernel_args else None
+        n_qubits = _nqubits_from_quake(quake_ir)
+        iree_args: list[str] = [f"{v}::f64" for v in kernel_args] if kernel_args else []
+        if n_qubits is not None:
+            iree_args.append(_init_sv_input(n_qubits))
         try:
-            result = iree_run(vmfb_file, func_name, args=iree_args)
+            result = iree_run(vmfb_file, func_name, args=iree_args or None)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False
@@ -441,8 +472,12 @@ def run_sample_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
+        n_qubits = _nqubits_from_quake(quake_ir)
+        iree_args: list[str] = []
+        if n_qubits is not None:
+            iree_args.append(_init_sv_input(n_qubits))
         try:
-            result = iree_run(vmfb_file, func_name)
+            result = iree_run(vmfb_file, func_name, args=iree_args or None)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False

@@ -27,16 +27,17 @@ add_mlir_library(QuakeToStandard
   LINK_LIBS PUBLIC  
     QuakeDialect  
     CCDialect  
-    MLIRArithDialect  
-    MLIRFuncDialect  
-    MLIRFuncTransforms  
-    MLIRIR  
-    MLIRMemRefDialect  
-    MLIRMathDialect  
-    MLIRPass  
-    MLIRSCFDialect  
-    MLIRTensorDialect  
-    MLIRTransforms  
+    MLIRArithDialect
+    MLIRFuncDialect
+    MLIRFuncTransforms
+    MLIRIR
+    MLIRLinalgDialect
+    MLIRMemRefDialect
+    MLIRMathDialect
+    MLIRPass
+    MLIRSCFDialect
+    MLIRTensorDialect
+    MLIRTransforms
 )  
 
 set(LLVM_TARGET_DEFINITIONS QuakeToStandard.td)  

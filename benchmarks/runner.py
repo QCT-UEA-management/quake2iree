@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import iree.compiler as irec
 import iree.runtime as ireert
 
@@ -84,13 +85,19 @@ def time_iree(
     ctx.add_vm_module(ireert.VmModule.copy_buffer(ctx.instance, vmfb))
     fn = ctx.modules.module[func_name]
 
+    # Build |00...0⟩ initial statevector: 1.0 at index 0, zeros elsewhere.
+    # Passed as a runtime argument so IREE cannot constant-fold the circuit.
+    n_f32 = 2 * (1 << n_qubits)
+    init_sv = np.zeros(n_f32, dtype=np.float32)
+    init_sv[0] = 1.0
+
     for _ in range(warmup):
-        fn()
+        fn(init_sv)
 
     samples: list[float] = []
     for _ in range(n):
         t0 = time.perf_counter()
-        fn()
+        fn(init_sv)
         samples.append((time.perf_counter() - t0) * 1e6)
 
     return _stats(backend.name, n_qubits, samples)

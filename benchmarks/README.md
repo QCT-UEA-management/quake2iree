@@ -25,8 +25,13 @@ python3 benchmarks/01_latency.py --no-cuda
 # CPU + NVIDIA GPU (requires CUDA driver):
 python3 benchmarks/01_latency.py
 
-# Custom qubit range and run count:
-python3 benchmarks/01_latency.py --qubit-counts 2,4,8,12,16 --runs 500
+# Custom qubit range, run count, and warmup:
+python3 benchmarks/01_latency.py --qubit-counts 2,4,8,12,16 --runs 500 --warmup 50
+
+# Select specific backends explicitly (overrides --no-cuda):
+python3 benchmarks/01_latency.py --backends iree-cpu,iree-vmvx,cudaq-cpu
+
+# Available backend names: iree-cpu, iree-cuda, iree-vmvx, cudaq-cpu, cudaq-gpu
 
 # Generate plot immediately after benchmarking:
 python3 benchmarks/01_latency.py --plot
@@ -62,8 +67,9 @@ cudaq-gpu,2,10176.610,210.300,9950.000,200
 2. Pass the new backend to `run_benchmarks()` in the relevant benchmark script.
 3. Optionally add a visual style entry in `plots.py` under `_STYLE`.
 
-Currently stubbed but not wired into any script: `iree_rocm()`, `iree_vulkan()`,
-`IREE_VMVX` — they are ready to use once the corresponding driver is available.
+Currently stubbed but not wired into `01_latency.py`: `iree_rocm()`, `iree_vulkan()`
+— they are ready to use once the corresponding driver is available.
+`IREE_VMVX` is fully wired and selectable via `--backends iree-vmvx`.
 
 ## Reproducibility (paper use)
 

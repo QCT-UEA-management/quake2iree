@@ -55,10 +55,48 @@ def strip_cudaq_run_wrappers(quake_ir: str) -> str:
 
 
 def q2i_convert(input_file: Path, output_file: Path) -> subprocess.CompletedProcess:
-    """Lower quake dialect to standard dialects via q2i-opt."""
-    return subprocess.run(
+    """Lower quake dialect to standard dialects via q2i-opt.
+
+    Post-processes the output to add `output_shape` to `tensor.expand_shape`
+    ops — required by iree-compile (MLIR 20) but absent in the MLIR 16 text
+    format that q2i-opt emits.
+    """
+    result = subprocess.run(
         [str(Q2I_OPT), str(input_file), "--quake-to-standard", "-o", str(output_file)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+    if result.returncode == 0 and output_file.exists():
+        _patch_expand_shape(output_file)
+    return result
+
+
+def _patch_expand_shape(mlir_file: Path) -> None:
+    """Rewrite tensor.expand_shape to include the output_shape keyword.
+
+    q2i-opt is compiled against MLIR 16 which omits output_shape in the
+    textual format. iree-compile (MLIR 20) requires it. The shape values
+    are derived from the destination tensor type, which is always static
+    in our lowering.
+    """
+    text = mlir_file.read_text()
+
+    def rewrite(m: re.Match) -> str:
+        op_reassoc = m.group(1)   # "tensor.expand_shape %X [[...]]"
+        src_type   = m.group(2)   # e.g. "8xf32"
+        dest_type  = m.group(3)   # e.g. "2x2x1x2xf32"
+        # All 'x'-separated parts except the last are static dimensions.
+        parts = dest_type.split('x')
+        dims = parts[:-1]
+        output_shape = '[' + ', '.join(dims) + ']'
+        return (f'{op_reassoc} output_shape {output_shape} '
+                f': tensor<{src_type}> into tensor<{dest_type}>')
+
+    patched = re.sub(
+        r'(tensor\.expand_shape\s+\S+\s+\[\[[^\]]+\]\])'
+        r'\s*:\s*tensor<([^>]+)>\s*into\s*tensor<([^>]+)>',
+        rewrite,
+        text,
+    )
+    mlir_file.write_text(patched)

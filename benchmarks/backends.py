@@ -40,6 +40,7 @@ IREE_CPU = IREEBackend(
     name="iree-cpu",
     target_backend="llvm-cpu",
     driver="local-task",
+    extra_compile_args=("--iree-llvmcpu-target-cpu=host",),
 )
 
 CUDAQ_CPU = CUDAQBackend(name="cudaq-cpu", target="qpp-cpu")

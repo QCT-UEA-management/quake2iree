@@ -19,6 +19,7 @@ set (LIBS
   MLIRArithDialect
   MLIRComplexDialect
   MLIRFuncDialect
+  MLIRLinalgDialect
   MLIRLLVMDialect
   MLIRMemRefDialect
   MLIRSCFDialect
