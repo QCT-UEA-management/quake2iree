@@ -19,8 +19,19 @@ quality plots with `plots.py`.
 Build the project first (`./build.sh`), then:
 
 ```bash
-# CPU only (always works):
+# CPU only (always works). Compare CUDA-Q with IREE
 python3 benchmarks/01_latency.py --no-cuda
+
+# Or same as above: CPU only + compare CUDA-Q with IREE
+benchmarks/01_latency.py --backends iree-cpu,cudaq-cpu
+
+# GPU only: Compare CUDA-Q with IREE
+python3 benchmarks/01_latency.py --qubit-counts 10,12,14,16,18,20 --backends iree-cuda,cudaq-gpu --plot
+
+
+# CPU vs GPU: Only IREE comparison
+python3 benchmarks/01_latency.py --qubit-counts 16,18,20,22,24,26,28 --backends iree-cpu,iree-cuda --plot
+
 
 # CPU + NVIDIA GPU (requires CUDA driver):
 python3 benchmarks/01_latency.py
