@@ -26,4 +26,4 @@ jobs:
             -v "${{ github.workspace }}:/workspaces/quake2iree" \
             -w /workspaces/quake2iree \
             quake2iree-ci \
-            bash -lc './build.sh && pytest test/test_circuits.py -v'
+            bash -lc './scripts/build.sh && pytest test/test_circuits.py -v'
