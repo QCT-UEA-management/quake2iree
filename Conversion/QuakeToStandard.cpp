@@ -9,10 +9,13 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
+#include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -41,126 +44,117 @@ static RankedTensorType svTensorType(MLIRContext *ctx, int64_t nQubits) {
   return RankedTensorType::get({nF32}, Float32Type::get(ctx));
 }
 
-// Build |0...0> initial statevector: all zeros except sv[0] = 1.0
-static Value buildInitStatevector(OpBuilder &b, Location loc, int64_t nQubits) {
-  MLIRContext *ctx = b.getContext();
-  auto ty = svTensorType(ctx, nQubits);
-  int64_t nF32 = ty.getNumElements();
-
-  auto f32Ty = Float32Type::get(ctx);
-  SmallVector<Attribute> elems(nF32, FloatAttr::get(f32Ty, 0.0f));
-  elems[0] = FloatAttr::get(f32Ty, 1.0f);
-  return b.create<arith::ConstantOp>(loc, DenseElementsAttr::get(ty, elems));
-}
-
 // ---------------------------------------------------------------------------
 // Gate builders — take current tensor sv, return updated tensor.
 //
-// Bit arithmetic is entirely in i64.  We convert i64 → index explicitly
-// (arith.index_cast) before each tensor.extract / tensor.insert call.
-// We use arith.addi (not arith.ori) for non-overlapping bit fields —
-// IREE's VM lowering leaves arith.index_cast(arith.addi(i64)) as-is,
-// but adds unresolvable builtin.unrealized_conversion_cast for
-// arith.index_cast(arith.ori / arith.shli).
+// All gate builders use linalg.generic for parallel execution on CPU/GPU.
+// The statevector is reshaped to expose qubit dimensions as tensor axes,
+// allowing IREE to map each independent amplitude pair to a SIMD lane or
+// CUDA thread block.
+//
+// Initial state is a function argument (not a compile-time constant) to
+// prevent IREE from constant-folding the entire circuit at compile time.
 // ---------------------------------------------------------------------------
 
-// Apply 2×2 unitary with f32 SSA Value matrix entries.
-// Used by both constant gates (via buildApplyUnitary) and parametric gates.
+// Apply 2×2 unitary with f32 SSA Value matrix entries via linalg.generic.
+// Decomposes the statevector around qubitIdx into four 2D slices
+// (qubit=0/1 × re/im), applies the matrix element-wise, and reassembles.
 static Value buildApplyUnitaryV(OpBuilder &b, Location loc, Value sv,
                                 int64_t nQubits, int64_t qubitIdx,
                                 Value U00r, Value U00i,
                                 Value U01r, Value U01i,
                                 Value U10r, Value U10i,
                                 Value U11r, Value U11i) {
-  auto i64Ty = b.getI64Type();
-  auto idxTy = b.getIndexType();
+  MLIRContext *ctx = b.getContext();
+  auto f32Ty = Float32Type::get(ctx);
 
-  int64_t nComplex = 1LL << nQubits;
-  int64_t nPairs   = nComplex / 2;
+  // Decompose the 2^nQubits index space around the target qubit:
+  //   nUpper = 2^(nQubits - qubitIdx - 1)  — upper-bit combinations
+  //   nLower = 2^qubitIdx                  — lower-bit combinations
+  // Reshape tensor<2*2^n x f32> → tensor<nUpper × 2 × nLower × 2>
+  //   dim 0: upper bits, dim 1: target qubit (0 or 1),
+  //   dim 2: lower bits, dim 3: re/im
+  int64_t nUpper = 1LL << (nQubits - qubitIdx - 1);
+  int64_t nLower = 1LL << qubitIdx;
 
-  Value c0  = b.create<arith::ConstantIndexOp>(loc, 0);
-  Value c1  = b.create<arith::ConstantIndexOp>(loc, 1);
-  Value nP  = b.create<arith::ConstantIndexOp>(loc, nPairs);
+  // ── 1. Expand flat sv to 4D.
+  auto sv4dTy = RankedTensorType::get({nUpper, 2, nLower, 2}, f32Ty);
+  Value sv4d = b.create<tensor::ExpandShapeOp>(loc, sv4dTy, sv,
+      ReassociationIndices{{0, 1, 2, 3}});
 
-  Value qi_64  = b.create<arith::ConstantIntOp>(loc, qubitIdx, i64Ty);
-  Value c1_64  = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
-  Value stride = b.create<arith::ShLIOp>(loc, c1_64, qi_64);   // 1 << qi
-  Value lmask  = b.create<arith::SubIOp>(loc, stride, c1_64);  // stride - 1
-  Value qp1    = b.create<arith::AddIOp>(loc, qi_64, c1_64);   // qi + 1
+  // ── 2. Slice out four 2D tensors (one per qubit-state × re/im combination).
+  auto sliceTy = RankedTensorType::get({nUpper, nLower}, f32Ty);
+  auto mkSlice = [&](int64_t qBit, int64_t ri) -> Value {
+    SmallVector<OpFoldResult> off = {b.getIndexAttr(0),     b.getIndexAttr(qBit),
+                                     b.getIndexAttr(0),     b.getIndexAttr(ri)};
+    SmallVector<OpFoldResult> sz  = {b.getIndexAttr(nUpper), b.getIndexAttr(1),
+                                     b.getIndexAttr(nLower), b.getIndexAttr(1)};
+    SmallVector<OpFoldResult> st  = {b.getIndexAttr(1), b.getIndexAttr(1),
+                                     b.getIndexAttr(1), b.getIndexAttr(1)};
+    return b.create<tensor::ExtractSliceOp>(loc, sliceTy, sv4d, off, sz, st);
+  };
+  Value a0r = mkSlice(0, 0), a0i = mkSlice(0, 1);
+  Value a1r = mkSlice(1, 0), a1i = mkSlice(1, 1);
 
-  auto loop = b.create<scf::ForOp>(
-      loc, c0, nP, c1, ValueRange{sv},
-      [U00r, U00i, U01r, U01i, U10r, U10i, U11r, U11i,
-       qi_64, stride, lmask, qp1, c1_64, i64Ty, idxTy]
-      (OpBuilder &body, Location l, Value j, ValueRange iters) {
-        Value sv_cur = iters[0];
+  // ── 3. linalg.generic: all-parallel 2D update over (nUpper × nLower).
+  //       4 inputs (a0r, a0i, a1r, a1i), 4 outputs — all identity maps.
+  auto idMap = AffineMap::getMultiDimIdentityMap(2, ctx);
+  SmallVector<AffineMap> maps(8, idMap);
+  SmallVector<utils::IteratorType> iters(2, utils::IteratorType::parallel);
+  auto mkEmpty = [&]() -> Value {
+    return b.create<tensor::EmptyOp>(loc, ArrayRef<int64_t>{nUpper, nLower}, f32Ty);
+  };
 
-        // Compute pair indices k0 (qubit-bit = 0) and k1 = k0 + stride
-        Value j64   = body.create<arith::IndexCastOp>(l, i64Ty, j);
-        Value lower = body.create<arith::AndIOp>(l, j64, lmask);
-        Value uHalf = body.create<arith::ShRUIOp>(l, j64, qi_64);
-        Value upper = body.create<arith::ShLIOp>(l, uHalf, qp1);
-        Value k0_64 = body.create<arith::AddIOp>(l, upper, lower);
-        Value k1_64 = body.create<arith::AddIOp>(l, k0_64, stride);
-
-        // f32 indices: 2*k, 2*k+1
-        Value k0r_64 = body.create<arith::ShLIOp>(l, k0_64, c1_64);
-        Value k0i_64 = body.create<arith::AddIOp>(l, k0r_64, c1_64);
-        Value k1r_64 = body.create<arith::ShLIOp>(l, k1_64, c1_64);
-        Value k1i_64 = body.create<arith::AddIOp>(l, k1r_64, c1_64);
-        Value k0r = body.create<arith::IndexCastOp>(l, idxTy, k0r_64);
-        Value k0i = body.create<arith::IndexCastOp>(l, idxTy, k0i_64);
-        Value k1r = body.create<arith::IndexCastOp>(l, idxTy, k1r_64);
-        Value k1i = body.create<arith::IndexCastOp>(l, idxTy, k1i_64);
-
-        // Load amplitudes a0 = sv[k0], a1 = sv[k1]
-        Value a0r = body.create<tensor::ExtractOp>(l, sv_cur, k0r);
-        Value a0i = body.create<tensor::ExtractOp>(l, sv_cur, k0i);
-        Value a1r = body.create<tensor::ExtractOp>(l, sv_cur, k1r);
-        Value a1i = body.create<tensor::ExtractOp>(l, sv_cur, k1i);
-
-        // na0 = U00 * a0 + U01 * a1  (complex multiply-add)
-        // na0r = U00r*a0r - U00i*a0i + U01r*a1r - U01i*a1i
-        Value t0 = body.create<arith::MulFOp>(l, U00r, a0r);
-        Value t1 = body.create<arith::MulFOp>(l, U00i, a0i);
-        Value t2 = body.create<arith::MulFOp>(l, U01r, a1r);
-        Value t3 = body.create<arith::MulFOp>(l, U01i, a1i);
-        Value na0r = body.create<arith::SubFOp>(l,
-            body.create<arith::AddFOp>(l, t0, t2),
-            body.create<arith::AddFOp>(l, t1, t3));
-        // na0i = U00r*a0i + U00i*a0r + U01r*a1i + U01i*a1r
-        Value t4 = body.create<arith::MulFOp>(l, U00r, a0i);
-        Value t5 = body.create<arith::MulFOp>(l, U00i, a0r);
-        Value t6 = body.create<arith::MulFOp>(l, U01r, a1i);
-        Value t7 = body.create<arith::MulFOp>(l, U01i, a1r);
-        Value na0i = body.create<arith::AddFOp>(l,
-            body.create<arith::AddFOp>(l, t4, t5),
-            body.create<arith::AddFOp>(l, t6, t7));
-
-        // na1 = U10 * a0 + U11 * a1
-        Value t8  = body.create<arith::MulFOp>(l, U10r, a0r);
-        Value t9  = body.create<arith::MulFOp>(l, U10i, a0i);
-        Value t10 = body.create<arith::MulFOp>(l, U11r, a1r);
-        Value t11 = body.create<arith::MulFOp>(l, U11i, a1i);
-        Value na1r = body.create<arith::SubFOp>(l,
-            body.create<arith::AddFOp>(l, t8, t10),
-            body.create<arith::AddFOp>(l, t9, t11));
-        Value t12 = body.create<arith::MulFOp>(l, U10r, a0i);
-        Value t13 = body.create<arith::MulFOp>(l, U10i, a0r);
-        Value t14 = body.create<arith::MulFOp>(l, U11r, a1i);
-        Value t15 = body.create<arith::MulFOp>(l, U11i, a1r);
-        Value na1i = body.create<arith::AddFOp>(l,
-            body.create<arith::AddFOp>(l, t12, t13),
-            body.create<arith::AddFOp>(l, t14, t15));
-
-        // Store updated amplitudes back into tensor (functional update)
-        Value s0 = body.create<tensor::InsertOp>(l, na0r, sv_cur, k0r);
-        Value s1 = body.create<tensor::InsertOp>(l, na0i, s0, k0i);
-        Value s2 = body.create<tensor::InsertOp>(l, na1r, s1, k1r);
-        Value s3 = body.create<tensor::InsertOp>(l, na1i, s2, k1i);
-        body.create<scf::YieldOp>(l, s3);
+  auto generic = b.create<linalg::GenericOp>(
+      loc,
+      TypeRange{sliceTy, sliceTy, sliceTy, sliceTy},
+      ValueRange{a0r, a0i, a1r, a1i},
+      ValueRange{mkEmpty(), mkEmpty(), mkEmpty(), mkEmpty()},
+      maps, iters,
+      [U00r, U00i, U01r, U01i, U10r, U10i, U11r, U11i](
+          OpBuilder &nb, Location nl, ValueRange args) {
+        Value a0r_v = args[0], a0i_v = args[1];
+        Value a1r_v = args[2], a1i_v = args[3];
+        auto mul = [&](Value x, Value y) { return nb.create<arith::MulFOp>(nl, x, y); };
+        auto add = [&](Value x, Value y) { return nb.create<arith::AddFOp>(nl, x, y); };
+        auto sub = [&](Value x, Value y) { return nb.create<arith::SubFOp>(nl, x, y); };
+        // na0 = U00*a0 + U01*a1
+        Value na0r_v = sub(add(mul(U00r, a0r_v), mul(U01r, a1r_v)),
+                           add(mul(U00i, a0i_v), mul(U01i, a1i_v)));
+        Value na0i_v = add(add(mul(U00r, a0i_v), mul(U00i, a0r_v)),
+                           add(mul(U01r, a1i_v), mul(U01i, a1r_v)));
+        // na1 = U10*a0 + U11*a1
+        Value na1r_v = sub(add(mul(U10r, a0r_v), mul(U11r, a1r_v)),
+                           add(mul(U10i, a0i_v), mul(U11i, a1i_v)));
+        Value na1i_v = add(add(mul(U10r, a0i_v), mul(U10i, a0r_v)),
+                           add(mul(U11r, a1i_v), mul(U11i, a1r_v)));
+        nb.create<linalg::YieldOp>(nl, ValueRange{na0r_v, na0i_v, na1r_v, na1i_v});
       });
-  return loop.getResult(0);
+
+  Value na0r = generic.getResult(0), na0i = generic.getResult(1);
+  Value na1r = generic.getResult(2), na1i = generic.getResult(3);
+
+  // ── 4. Reassemble the 4D tensor from the updated slices.
+  Value empty4d = b.create<tensor::EmptyOp>(loc,
+      ArrayRef<int64_t>{nUpper, 2, nLower, 2}, f32Ty);
+  auto mkInsert = [&](Value slice, Value dest, int64_t qBit, int64_t ri) -> Value {
+    SmallVector<OpFoldResult> off = {b.getIndexAttr(0),     b.getIndexAttr(qBit),
+                                     b.getIndexAttr(0),     b.getIndexAttr(ri)};
+    SmallVector<OpFoldResult> sz  = {b.getIndexAttr(nUpper), b.getIndexAttr(1),
+                                     b.getIndexAttr(nLower), b.getIndexAttr(1)};
+    SmallVector<OpFoldResult> st  = {b.getIndexAttr(1), b.getIndexAttr(1),
+                                     b.getIndexAttr(1), b.getIndexAttr(1)};
+    return b.create<tensor::InsertSliceOp>(loc, slice, dest, off, sz, st);
+  };
+  Value sv4d_new = mkInsert(na0r, empty4d, 0, 0);
+  sv4d_new      = mkInsert(na0i, sv4d_new, 0, 1);
+  sv4d_new      = mkInsert(na1r, sv4d_new, 1, 0);
+  sv4d_new      = mkInsert(na1i, sv4d_new, 1, 1);
+
+  // ── 5. Collapse back to flat tensor<2*2^nQubits x f32>.
+  auto flatTy = sv.getType().cast<RankedTensorType>();
+  return b.create<tensor::CollapseShapeOp>(loc, flatTy, sv4d_new,
+      ReassociationIndices{{0, 1, 2, 3}});
 }
 
 // Convenience wrapper: create f32 constants from compile-time floats.
@@ -180,78 +174,72 @@ static Value buildApplyUnitary(OpBuilder &b, Location loc, Value sv,
 }
 
 // Apply CNOT: flip qubit `tgtIdx` when qubit `ctrlIdx` is |1>.
+//
+// CNOT(ctrl, tgt) = identity on ctrl=0 half + X(tgt) on ctrl=1 half.
+// Implementation:
+//   1. Reshape sv around ctrl qubit: tensor<N> → tensor<nCU × 2 × nCL × 2>
+//   2. Extract ctrl=1 slice: tensor<nCU × nCL × 2>  (an (n-1)-qubit subspace)
+//   3. Collapse to flat tensor<2·2^(n-1)> and apply X via buildApplyUnitaryV
+//      (fully parallel linalg.generic over 2^(n-1) amplitude pairs)
+//   4. Expand result back, insert into sv4d, collapse to flat
+//
+// Effective tgt index in the (n-1)-qubit subspace:
+//   effTgt = tgtIdx - 1  when ctrlIdx < tgtIdx  (ctrl was below tgt)
+//   effTgt = tgtIdx      otherwise
 static Value buildApplyCNOT(OpBuilder &b, Location loc, Value sv,
                              int64_t nQubits, int64_t ctrlIdx, int64_t tgtIdx) {
-  auto i64Ty = b.getI64Type();
-  auto idxTy = b.getIndexType();
+  MLIRContext *ctx = b.getContext();
+  auto f32Ty = Float32Type::get(ctx);
 
-  int64_t nComplex = 1LL << nQubits;
-  int64_t nPairs   = nComplex / 2;
+  int64_t nCU = 1LL << (nQubits - ctrlIdx - 1);  // upper-bit combinations
+  int64_t nCL = 1LL << ctrlIdx;                   // lower-bit combinations
 
-  Value c0  = b.create<arith::ConstantIndexOp>(loc, 0);
-  Value c1  = b.create<arith::ConstantIndexOp>(loc, 1);
-  Value nP  = b.create<arith::ConstantIndexOp>(loc, nPairs);
+  // ── 1. Reshape sv to expose the ctrl qubit.
+  //       tensor<2*2^n> → tensor<nCU × 2 × nCL × 2>
+  //         dim 0: upper bits, dim 1: ctrl qubit, dim 2: lower bits, dim 3: re/im
+  auto sv4dTy = RankedTensorType::get({nCU, 2, nCL, 2}, f32Ty);
+  Value sv4d = b.create<tensor::ExpandShapeOp>(loc, sv4dTy, sv,
+      ReassociationIndices{{0, 1, 2, 3}});
 
-  Value ti      = b.create<arith::ConstantIntOp>(loc, tgtIdx, i64Ty);
-  Value ci      = b.create<arith::ConstantIntOp>(loc, ctrlIdx, i64Ty);
-  Value c1_64   = b.create<arith::ConstantIntOp>(loc, 1, i64Ty);
-  Value c0_64   = b.create<arith::ConstantIntOp>(loc, 0, i64Ty);
-  Value stTgt   = b.create<arith::ShLIOp>(loc, c1_64, ti);   // 1 << tgt
-  Value stCtrl  = b.create<arith::ShLIOp>(loc, c1_64, ci);   // 1 << ctrl
-  Value lmask   = b.create<arith::SubIOp>(loc, stTgt, c1_64); // stTgt - 1
-  Value tp1     = b.create<arith::AddIOp>(loc, ti, c1_64);   // tgt + 1
+  // ── 2. Extract the ctrl=1 sub-tensor (rank-reduced: drops the size-1 ctrl dim).
+  auto sliceTy = RankedTensorType::get({nCU, nCL, 2}, f32Ty);
+  SmallVector<OpFoldResult> off = {b.getIndexAttr(0),   b.getIndexAttr(1),
+                                   b.getIndexAttr(0),   b.getIndexAttr(0)};
+  SmallVector<OpFoldResult> sz  = {b.getIndexAttr(nCU), b.getIndexAttr(1),
+                                   b.getIndexAttr(nCL), b.getIndexAttr(2)};
+  SmallVector<OpFoldResult> st  = {b.getIndexAttr(1),   b.getIndexAttr(1),
+                                   b.getIndexAttr(1),   b.getIndexAttr(1)};
+  Value sv_ctrl1 = b.create<tensor::ExtractSliceOp>(loc, sliceTy, sv4d, off, sz, st);
 
-  auto loop = b.create<scf::ForOp>(
-      loc, c0, nP, c1, ValueRange{sv},
-      [ti, stTgt, stCtrl, lmask, tp1, c1_64, c0_64, i64Ty, idxTy]
-      (OpBuilder &body, Location l, Value j, ValueRange iters) {
-        Value sv_cur = iters[0];
+  // ── 3. Collapse ctrl=1 slice to flat (n-1)-qubit statevector.
+  int64_t nSubF32 = 2LL * (1LL << (nQubits - 1));
+  auto subFlatTy = RankedTensorType::get({nSubF32}, f32Ty);
+  Value sv_sub = b.create<tensor::CollapseShapeOp>(loc, subFlatTy, sv_ctrl1,
+      ReassociationIndices{{0, 1, 2}});
 
-        Value j64   = body.create<arith::IndexCastOp>(l, i64Ty, j);
-        Value lower = body.create<arith::AndIOp>(l, j64, lmask);
-        Value uHalf = body.create<arith::ShRUIOp>(l, j64, ti);
-        Value upper = body.create<arith::ShLIOp>(l, uHalf, tp1);
-        Value k0_64 = body.create<arith::AddIOp>(l, upper, lower);
-        Value k1_64 = body.create<arith::AddIOp>(l, k0_64, stTgt);
+  // ── 4. Apply X gate on the tgt qubit within the (n-1)-qubit subspace.
+  //       Effective tgt index shifts down by 1 when ctrl was below tgt.
+  int64_t effTgt = (ctrlIdx < tgtIdx) ? tgtIdx - 1 : tgtIdx;
+  auto mk = [&](float v) -> Value {
+    return b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, v));
+  };
+  // X = [[0, 1], [1, 0]] — swaps amplitude pairs with tgt bit = 0 and 1.
+  Value sv_sub_new = buildApplyUnitaryV(b, loc, sv_sub, nQubits - 1, effTgt,
+      mk(0.f), mk(0.f), mk(1.f), mk(0.f),
+      mk(1.f), mk(0.f), mk(0.f), mk(0.f));
 
-        // f32 indices
-        Value k0r_64 = body.create<arith::ShLIOp>(l, k0_64, c1_64);
-        Value k0i_64 = body.create<arith::AddIOp>(l, k0r_64, c1_64);
-        Value k1r_64 = body.create<arith::ShLIOp>(l, k1_64, c1_64);
-        Value k1i_64 = body.create<arith::AddIOp>(l, k1r_64, c1_64);
-        Value k0r = body.create<arith::IndexCastOp>(l, idxTy, k0r_64);
-        Value k0i = body.create<arith::IndexCastOp>(l, idxTy, k0i_64);
-        Value k1r = body.create<arith::IndexCastOp>(l, idxTy, k1r_64);
-        Value k1i = body.create<arith::IndexCastOp>(l, idxTy, k1i_64);
+  // ── 5. Expand updated subspace back to the 3D slice shape.
+  Value sv_ctrl1_new = b.create<tensor::ExpandShapeOp>(loc, sliceTy, sv_sub_new,
+      ReassociationIndices{{0, 1, 2}});
 
-        // Swap amplitudes k0 ↔ k1 only when ctrl bit of k0 is set.
-        Value ctrlBit = body.create<arith::AndIOp>(l, k0_64, stCtrl);
-        Value isCtrl  = body.create<arith::CmpIOp>(
-            l, arith::CmpIPredicate::ne, ctrlBit, c0_64);
+  // ── 6. Insert the updated ctrl=1 slice back into the 4D tensor.
+  Value sv4d_new = b.create<tensor::InsertSliceOp>(loc, sv_ctrl1_new, sv4d,
+      off, sz, st);
 
-        // scf.if with result carries the (possibly updated) tensor.
-        // The builder variant (cond, thenFn, elseFn) infers result types
-        // from the scf.yield inside each region.
-        Value updated = body.create<scf::IfOp>(
-            l, isCtrl,
-            [sv_cur, k0r, k0i, k1r, k1i](OpBuilder &tb, Location tl) {
-              Value a0r = tb.create<tensor::ExtractOp>(tl, sv_cur, k0r);
-              Value a0i = tb.create<tensor::ExtractOp>(tl, sv_cur, k0i);
-              Value a1r = tb.create<tensor::ExtractOp>(tl, sv_cur, k1r);
-              Value a1i = tb.create<tensor::ExtractOp>(tl, sv_cur, k1i);
-              Value s0  = tb.create<tensor::InsertOp>(tl, a1r, sv_cur, k0r);
-              Value s1  = tb.create<tensor::InsertOp>(tl, a1i, s0, k0i);
-              Value s2  = tb.create<tensor::InsertOp>(tl, a0r, s1, k1r);
-              Value s3  = tb.create<tensor::InsertOp>(tl, a0i, s2, k1i);
-              tb.create<scf::YieldOp>(tl, s3);
-            },
-            [sv_cur](OpBuilder &eb, Location el) {
-              eb.create<scf::YieldOp>(el, sv_cur);
-            }).getResult(0);
-
-        body.create<scf::YieldOp>(l, updated);
-      });
-  return loop.getResult(0);
+  // ── 7. Collapse the 4D tensor back to flat.
+  auto flatTy = sv.getType().cast<RankedTensorType>();
+  return b.create<tensor::CollapseShapeOp>(loc, flatTy, sv4d_new,
+      ReassociationIndices{{0, 1, 2, 3}});
 }
 
 // Deterministic Z-basis measurement bit: true when P(qubit=1) > 0.5.
@@ -430,6 +418,7 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
   llvm::DenseMap<Value, Value> measToBit;
 
   SmallVector<Operation *> toErase;
+  SmallVector<Type> addedArgTypes; // sv arg types prepended to the function
   Value finalSv; // last statevector tensor produced (returned from function)
 
   for (Block &block : fn.getBody()) {
@@ -445,7 +434,12 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         if (!veqTy.hasSpecifiedSize())
           return op->emitError("dynamic qubit count not yet supported");
         int64_t nQubits = veqTy.getSize();
-        Value sv = buildInitStatevector(b, loc, nQubits);
+        // Add the initial statevector as a function argument rather than a
+        // compile-time constant.  A dense constant would let IREE constant-fold
+        // the entire circuit away; a runtime argument forces actual execution.
+        auto svTy = svTensorType(ctx, nQubits);
+        Value sv = fn.getBody().front().addArgument(svTy, loc);
+        addedArgTypes.push_back(svTy);
         veqToSv[alloca.getResult()] = sv;
         finalSv = sv;
         toErase.push_back(op);
@@ -843,14 +837,22 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
     return fn->emitError("no statevector produced — no quake.alloca found");
 
   auto oldFnTy = fn.getFunctionType();
-  if (!oldFnTy.getResults().empty())
+
+  // Build updated input list: original inputs + sv args added for each alloca.
+  SmallVector<Type> newInputs(oldFnTy.getInputs().begin(),
+                              oldFnTy.getInputs().end());
+  newInputs.append(addedArgTypes.begin(), addedArgTypes.end());
+
+  if (!oldFnTy.getResults().empty()) {
+    fn.setFunctionType(FunctionType::get(ctx, newInputs, oldFnTy.getResults()));
     return success();
+  }
 
   // Update void quantum functions to return the final statevector tensor.
   SmallVector<Type> newResults(oldFnTy.getResults().begin(),
                                oldFnTy.getResults().end());
   newResults.push_back(finalSv.getType());
-  fn.setFunctionType(FunctionType::get(ctx, oldFnTy.getInputs(), newResults));
+  fn.setFunctionType(FunctionType::get(ctx, newInputs, newResults));
 
   // Update every return op to include the final statevector.
   fn.walk([&](func::ReturnOp ret) {
@@ -871,6 +873,13 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
 
 struct QuakeToStandard : impl::QuakeToStandardBase<QuakeToStandard> {
   using QuakeToStandardBase::QuakeToStandardBase;
+
+  // Declare dialects produced by this pass so the pass manager loads them
+  // before runOnOperation() is called.
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<linalg::LinalgDialect, tensor::TensorDialect,
+                    scf::SCFDialect>();
+  }
 
   void runOnOperation() override {
     MLIRContext *ctx = &getContext();

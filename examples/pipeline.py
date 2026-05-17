@@ -1,3 +1,11 @@
+# ============================================================================ #
+# Copyright (c) 2022 - 2026 NVIDIA Corporation & Affiliates.                   #
+# All rights reserved.                                                         #
+#                                                                              #
+# This source code and the accompanying materials are made available under     #
+# the terms of the Apache License 2.0 which accompanies this distribution.     #
+# ============================================================================ #
+
 """Shared plumbing for quake2iree examples.
 
 Each helper wraps one pipeline stage and returns a CompletedProcess so the
@@ -6,71 +14,36 @@ Display helpers (banner, show_ir, step_ok, step_fail) keep example scripts
 readable without duplicating formatting logic.
 """
 
-import random
 import re
+import random
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-Q2I_OPT = ROOT / "build" / "tool" / "q2i-opt"
+from q2i.lowering import (  # noqa: F401 — re-exported for example scripts
+    emit_quake,
+    entrypoint_name,
+    q2i_convert,
+    strip_cudaq_run_wrappers,
+)
+
 IREE_BACKEND = "llvm-cpu"
 
 
-# ---------------------------------------------------------------------------
-# Stage runners
-# ---------------------------------------------------------------------------
-
-def emit_quake(kernel) -> str:
-    """Compile a CUDA-Q kernel and return its raw quake MLIR string."""
-    kernel.compile()
-    return str(kernel.qkeModule)
+def _nqubits_from_quake(quake_ir: str) -> int | None:
+    """Extract the qubit count from the first quake.alloca in the IR."""
+    m = re.search(r'quake\.alloca !quake\.veq<(\d+)>', quake_ir)
+    return int(m.group(1)) if m else None
 
 
-def entrypoint_name(quake_ir: str) -> str | None:
-    """Return the symbol name of the cudaq-entrypoint function, or None."""
-    m = re.search(r'func\.func @(\S+?)\(.*?"cudaq-entrypoint"', quake_ir)
-    return m.group(1) if m else None
+def _init_sv_input(n_qubits: int) -> str:
+    """Build the iree-run-module --input value for |00...0⟩.
 
-
-def strip_cudaq_run_wrappers(quake_ir: str) -> str:
-    """Remove CUDA-Q .run helper functions that contain unsupported cc ops."""
-    output = []
-    skipping = False
-    brace_depth = 0
-
-    for line in quake_ir.splitlines():
-        starts_run_wrapper = (
-            "func.func @" in line and
-            (".run()" in line or ".run.entry()" in line)
-        )
-        if not skipping and starts_run_wrapper:
-            skipping = True
-            brace_depth = line.count("{") - line.count("}")
-            if brace_depth <= 0:
-                skipping = False
-            continue
-
-        if skipping:
-            brace_depth += line.count("{") - line.count("}")
-            if brace_depth <= 0:
-                skipping = False
-            continue
-
-        output.append(line)
-
-    return "\n".join(output) + "\n"
-
-
-def q2i_convert(input_file: Path, output_file: Path) -> subprocess.CompletedProcess:
-    """Lower quake dialect to standard dialects via q2i-opt."""
-    return subprocess.run(
-        [str(Q2I_OPT), str(input_file), "--quake-to-standard", "-o", str(output_file)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    Format: '<N>xf32=1 0 0 ... 0'  (2·2^n floats, first=1, rest=0).
+    """
+    n_f32 = 2 * (1 << n_qubits)
+    return f"{n_f32}xf32=1 " + " ".join(["0"] * (n_f32 - 1))
 
 
 def iree_compile(
@@ -286,9 +259,13 @@ def run_statevector_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
-        iree_args = [f"{v}::f64" for v in kernel_args] if kernel_args else None
+        # The sv arg is appended after existing kernel args, so order: kernel_args then sv.
+        n_qubits = _nqubits_from_quake(quake_ir)
+        iree_args: list[str] = [f"{v}::f64" for v in kernel_args] if kernel_args else []
+        if n_qubits is not None:
+            iree_args.append(_init_sv_input(n_qubits))
         try:
-            result = iree_run(vmfb_file, func_name, args=iree_args)
+            result = iree_run(vmfb_file, func_name, args=iree_args or None)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False
@@ -360,9 +337,12 @@ def run_i1_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
-        iree_args = [f"{v}::f64" for v in kernel_args] if kernel_args else None
+        n_qubits = _nqubits_from_quake(quake_ir)
+        iree_args: list[str] = [f"{v}::f64" for v in kernel_args] if kernel_args else []
+        if n_qubits is not None:
+            iree_args.append(_init_sv_input(n_qubits))
         try:
-            result = iree_run(vmfb_file, func_name, args=iree_args)
+            result = iree_run(vmfb_file, func_name, args=iree_args or None)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False
@@ -492,8 +472,12 @@ def run_sample_kernel(
             return False
         step_ok("iree-compile", f"{vmfb_file.stat().st_size} bytes")
 
+        n_qubits = _nqubits_from_quake(quake_ir)
+        iree_args: list[str] = []
+        if n_qubits is not None:
+            iree_args.append(_init_sv_input(n_qubits))
         try:
-            result = iree_run(vmfb_file, func_name)
+            result = iree_run(vmfb_file, func_name, args=iree_args or None)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False
