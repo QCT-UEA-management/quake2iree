@@ -120,6 +120,58 @@ def plot_compile_time(csv_path: Path, output_path: Path | None = None) -> None:
     print(f"Saved compile plot: {dest}")
 
 
+def plot_total_time(csv_path: Path, output_path: Path | None = None,
+                    max_evals: int = 1000) -> None:
+    """Plot cumulative wall time (compile + N × exec) vs number of evaluations.
+
+    Shows the crossover point where IREE's AOT compilation cost is amortised
+    by faster per-call execution compared to CUDA-Q.
+    X-axis: number of circuit evaluations (log scale).
+    Y-axis: total time in milliseconds.
+    """
+    data = _load_csv(csv_path)
+    if not data:
+        raise ValueError(f"No data found in {csv_path}")
+
+    ns = [1] + list(range(10, max_evals + 1, 10))
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    all_qubit_counts: set[int] = set()
+    for backend, by_n in sorted(data.items()):
+        all_qubit_counts.update(by_n.keys())
+        # Average exec and compile cost across all qubit counts.
+        all_medians = [v["median_us"] for v in by_n.values()]
+        all_compile = [v["compile_ms"] for v in by_n.values()]
+        median_us  = sum(all_medians) / len(all_medians)
+        compile_ms = sum(all_compile) / len(all_compile)
+
+        exec_ms_per_call = median_us / 1000.0
+        totals = [compile_ms + n * exec_ms_per_call for n in ns]
+
+        style = _STYLE.get(backend, _DEFAULT_STYLE)
+        ax.plot(ns, totals, label=backend, linewidth=1.8, **style)
+
+    qubit_str = ", ".join(str(q) for q in sorted(all_qubit_counts))
+    ax.set_xscale("log")
+    ax.set_xlabel("Number of circuit evaluations", fontsize=11)
+    ax.set_ylabel("Total wall time (ms)", fontsize=11)
+    ax.set_title(
+        f"Total cost: compilation + N × execution  (qubits averaged: {qubit_str})",
+        fontsize=11,
+    )
+    ax.grid(True, which="both", linestyle=":", alpha=0.45)
+    ax.legend(loc="upper left", fontsize=9, framealpha=0.85)
+
+    fig.tight_layout()
+
+    dest = output_path or csv_path.with_suffix("").with_name(
+        csv_path.stem + "_total.png")
+    fig.savefig(dest, dpi=150)
+    plt.close(fig)
+    print(f"Saved total-time plot: {dest}")
+
+
 if __name__ == "__main__":
     csv_file = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     if csv_file is None:
@@ -128,3 +180,4 @@ if __name__ == "__main__":
     out_file = Path(sys.argv[2]) if len(sys.argv) > 2 else None
     plot_latency(csv_file, out_file)
     plot_compile_time(csv_file)
+    plot_total_time(csv_file)
