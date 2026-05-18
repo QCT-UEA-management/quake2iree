@@ -1,11 +1,13 @@
 """Backend descriptors for IREE and CUDA-Q execution targets.
 
 Each descriptor carries all the information needed to compile and run a kernel
-on a specific device. Adding a new backend is a matter of defining a new
-IREEBackend or CUDAQBackend instance — no changes to runner.py are needed.
+on a specific device. Adding a new backend requires only two steps here:
+  1. Define an IREEBackend constant or factory function.
+  2. Add an entry to resolve_backend() and KNOWN_BACKENDS.
+No changes to runner.py are needed.
 
-IREE target-backend strings: llvm-cpu, cuda, rocm, vulkan-spirv, vmvx
-IREE driver strings:          local-task, cuda, rocm, vulkan, local-task
+IREE target-backend strings: llvm-cpu, cuda, rocm, vulkan-spirv, metal, vmvx
+IREE driver strings:          local-task, cuda, rocm, vulkan, metal, local-task
 """
 
 from __future__ import annotations
@@ -78,11 +80,15 @@ def iree_cuda(sm: str | None = None) -> IREEBackend:
 CUDAQ_GPU = CUDAQBackend(name="cudaq-gpu", target="nvidia")
 
 # ---------------------------------------------------------------------------
-# AMD ROCm  (future)
+# AMD ROCm
 # ---------------------------------------------------------------------------
 
 def iree_rocm(target_chip: str = "gfx1100") -> IREEBackend:
-    """IREE ROCm backend for AMD GPUs."""
+    """IREE ROCm backend for AMD GPUs.
+
+    Pass the GFX chip string for your GPU, e.g. 'gfx906' (MI50),
+    'gfx908' (MI100), 'gfx90a' (MI250), 'gfx1100' (RX 7900).
+    """
     return IREEBackend(
         name="iree-rocm",
         target_backend="rocm",
@@ -92,11 +98,14 @@ def iree_rocm(target_chip: str = "gfx1100") -> IREEBackend:
 
 
 # ---------------------------------------------------------------------------
-# Vulkan  (future — cross-vendor GPU)
+# Vulkan  (cross-vendor GPU: NVIDIA, AMD, Intel, via MoltenVK on macOS)
 # ---------------------------------------------------------------------------
 
 def iree_vulkan() -> IREEBackend:
-    """IREE Vulkan backend for cross-vendor GPU execution."""
+    """IREE Vulkan backend for cross-vendor GPU execution.
+
+    On macOS this runs via MoltenVK, which translates Vulkan to Metal.
+    """
     return IREEBackend(
         name="iree-vulkan",
         target_backend="vulkan-spirv",
@@ -105,7 +114,20 @@ def iree_vulkan() -> IREEBackend:
 
 
 # ---------------------------------------------------------------------------
-# VMVX  (IREE portable reference interpreter)
+# Metal  (Apple GPU — macOS / iOS native)
+# ---------------------------------------------------------------------------
+
+def iree_metal() -> IREEBackend:
+    """IREE Metal backend for Apple GPU (macOS / iOS)."""
+    return IREEBackend(
+        name="iree-metal",
+        target_backend="metal",
+        driver="metal",
+    )
+
+
+# ---------------------------------------------------------------------------
+# VMVX  (IREE portable reference interpreter — always available, slowest)
 # ---------------------------------------------------------------------------
 
 IREE_VMVX = IREEBackend(
@@ -113,3 +135,37 @@ IREE_VMVX = IREEBackend(
     target_backend="vmvx",
     driver="local-task",
 )
+
+# ---------------------------------------------------------------------------
+# Backend registry
+# ---------------------------------------------------------------------------
+
+#: All backend names accepted by the --backends CLI flag.
+KNOWN_BACKENDS: frozenset[str] = frozenset({
+    "iree-cpu",
+    "iree-cuda",
+    "iree-rocm",
+    "iree-vulkan",
+    "iree-metal",
+    "iree-vmvx",
+    "cudaq-cpu",
+    "cudaq-gpu",
+})
+
+
+def resolve_backend(name: str) -> IREEBackend | CUDAQBackend:
+    """Return the backend descriptor for *name*.
+
+    This is the single place to extend when adding a new backend target.
+    Raises KeyError for unknown names.
+    """
+    match name:
+        case "iree-cpu":     return IREE_CPU
+        case "iree-cuda":    return iree_cuda()
+        case "iree-rocm":    return iree_rocm()
+        case "iree-vulkan":  return iree_vulkan()
+        case "iree-metal":   return iree_metal()
+        case "iree-vmvx":    return IREE_VMVX
+        case "cudaq-cpu":    return CUDAQ_CPU
+        case "cudaq-gpu":    return CUDAQ_GPU
+        case _:              raise KeyError(f"Unknown backend: {name!r}")
