@@ -16,71 +16,186 @@ quality plots with `plots.py`.
 
 ## How to run
 
-Build the project first (`./build.sh`), then:
+All commands below must be run from the **repo root** (`quake2iree/`).
+
+### 1. Prerequisites
 
 ```bash
-# CPU only (always works). Compare CUDA-Q with IREE
+# Build q2i-opt (the MLIR lowering tool)
+bash scripts/build.sh
+
+# Python dependencies (if not already installed)
+pip install iree-compiler iree-runtime cudaq matplotlib
+```
+
+### 2. Start here — CPU only (no GPU required)
+
+This is the safest starting point. It runs both IREE and CUDA-Q on CPU so you
+can compare them without needing a GPU or CUDA driver.
+
+```bash
 python3 benchmarks/01_latency.py --no-cuda
+```
 
-# Or same as above: CPU only + compare CUDA-Q with IREE
-benchmarks/01_latency.py --backends iree-cpu,cudaq-cpu
+By default this sweeps qubit counts `2,4,6,8,10,12`, runs 200 timed calls per
+measurement (after 20 warmup calls), and writes a CSV to
+`benchmarks/results/latency_YYYY-MM-DD.csv`.
 
-# GPU only: Compare CUDA-Q with IREE
-python3 benchmarks/01_latency.py --qubit-counts 10,12,14,16,18,20 --backends iree-cuda,cudaq-gpu --plot
+### 3. Choosing which backends to run
 
+Use `--backends` to select any combination explicitly. This overrides `--no-cuda`.
 
-# CPU vs GPU: Only IREE comparison
-python3 benchmarks/01_latency.py --qubit-counts 16,18,20,22,24,26,28 --backends iree-cpu,iree-cuda --plot
+```bash
+# Available backends: iree-cpu, iree-cuda, iree-vmvx, cudaq-cpu, cudaq-gpu
+#   iree-cpu   — IREE compiled to native CPU via LLVM (always available)
+#   iree-cuda  — IREE compiled to NVIDIA CUDA (requires CUDA driver)
+#   iree-vmvx  — IREE portable reference interpreter (slowest, always available)
+#   cudaq-cpu  — CUDA-Q qpp-cpu simulator (reference)
+#   cudaq-gpu  — CUDA-Q NVIDIA GPU simulator (requires CUDA driver)
 
+# IREE CPU vs CUDA-Q CPU only
+python3 benchmarks/01_latency.py --backends iree-cpu,cudaq-cpu
 
-# CPU + NVIDIA GPU (requires CUDA driver):
+# IREE CPU vs IREE CUDA (pure IREE comparison, no CUDA-Q)
+python3 benchmarks/01_latency.py --backends iree-cpu,iree-cuda
+
+# All backends — requires CUDA driver for iree-cuda and cudaq-gpu
 python3 benchmarks/01_latency.py
+```
 
-# Custom qubit range, run count, and warmup:
-python3 benchmarks/01_latency.py --qubit-counts 2,4,8,12,16 --runs 500 --warmup 50
+### 4. Customising the sweep
 
-# Select specific backends explicitly (overrides --no-cuda):
-python3 benchmarks/01_latency.py --backends iree-cpu,iree-vmvx,cudaq-cpu
+```bash
+# Larger qubit range and more timing samples (for a paper)
+python3 benchmarks/01_latency.py \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20 \
+    --runs 500 \
+    --warmup 50 \
+    --backends iree-cpu,iree-cuda,cudaq-cpu,cudaq-gpu
 
-# Available backend names: iree-cpu, iree-cuda, iree-vmvx, cudaq-cpu, cudaq-gpu
+# Write results to a specific file
+python3 benchmarks/01_latency.py --output benchmarks/results/my_run.csv
+```
 
-# Generate plot immediately after benchmarking:
-python3 benchmarks/01_latency.py --plot
+### 5. Generating plots
 
-# Plot an existing CSV:
-python3 benchmarks/plots.py benchmarks/results/latency_2026-05-12.csv
+Add `--plot` to any command to produce two PNGs alongside the CSV:
+
+```bash
+python3 benchmarks/01_latency.py --no-cuda --plot
+```
+
+This generates:
+
+- `<name>.png` — kernel execution latency (median line, shaded to p95)
+- `<name>_compile.png` — IREE AOT compilation time vs qubit count
+
+To plot an existing CSV without re-running the benchmark:
+
+```bash
+# Generates both plots from an existing CSV
+python3 benchmarks/plots.py benchmarks/results/ghz_2026-05-18.csv
+
+# Execution latency plot only
+python3 -c "
+from pathlib import Path
+from benchmarks.plots import plot_latency
+plot_latency(Path('benchmarks/results/ghz_2026-05-18.csv'))
+"
+
+# Compilation time plot only
+python3 -c "
+from pathlib import Path
+from benchmarks.plots import plot_compile_time
+plot_compile_time(Path('benchmarks/results/ghz_2026-05-18.csv'))
+"
 ```
 
 ## Output format
 
 Each run produces a CSV with one row per (backend, n\_qubits) pair:
 
+```csv
+backend,n_qubits,compile_ms,mean_us,median_us,std_us,p95_us,min_us,n_samples
+iree-cpu,2,403.1,41.564,41.234,1.142,42.557,40.498,200
+cudaq-cpu,2,0.0,23040.494,22287.970,3021.282,27244.716,19667.516,200
 ```
-backend,n_qubits,mean_us,std_us,min_us,n_samples
-iree-cpu,2,61.940,2.310,58.100,200
-iree-cuda,2,918.190,15.200,890.000,200
-cudaq-cpu,2,23233.010,320.500,22800.000,200
-cudaq-gpu,2,10176.610,210.300,9950.000,200
-```
+
+`compile_ms` is the one-time AOT compilation cost for IREE (q2i-opt + IREE/LLVM
+pipeline). It is `0.0` for CUDA-Q because its JIT cost is opaque and absorbed
+into the warmup phase.
 
 ## Measurement methodology
 
 - All timing uses `time.perf_counter()` around a single kernel call.
 - IREE kernels execute in-process via `iree.runtime` — no subprocess overhead.
 - Each measurement is preceded by a configurable warmup phase (default 20 calls).
-- Reported statistics: mean, standard deviation, and minimum over N calls (default 200).
-- **Compilation time is excluded**: each kernel is compiled once as setup before timing.
+- Reported statistics: median, p95, mean, standard deviation, and minimum
+  over N calls (default 200).
+- **Execution timing excludes compilation**: each kernel is compiled once before
+  the timing loop, and the compilation time is recorded separately in `compile_ms`.
+- **IREE `compile_ms`** covers the full AOT pipeline: quake IR emission,
+  `q2i-opt` lowering, and `iree-compile` (LLVM backend). At 12 qubits this
+  is approximately 1 second.
+- **CUDA-Q `compile_ms` is always 0**: JIT compilation happens inside the first
+  `cudaq.get_state()` call and cannot be separated from execution without
+  modifying CUDA-Q internals. It is absorbed into the warmup phase.
+- The **median** is the primary execution metric; it is robust to the occasional
+  GC pause that inflates the mean (visible as high p95 for CUDA-Q).
+- For workloads that evaluate the same circuit repeatedly (e.g. parametric
+  sweeps with runtime-argument kernels), IREE amortises its compilation cost
+  after approximately `compile_ms / (cudaq_median_ms − iree_median_ms)` calls
+  — roughly 40 calls at 12 qubits.
 
-## Adding a new backend
+## Adding a new benchmark circuit
 
-1. Add a descriptor in `backends.py` following the existing `IREEBackend` or
-   `CUDAQBackend` pattern.
-2. Pass the new backend to `run_benchmarks()` in the relevant benchmark script.
-3. Optionally add a visual style entry in `plots.py` under `_STYLE`.
+Create a new file `benchmarks/NN_name.py`. It only needs a kernel factory
+and one call to `benchmark_cli`:
 
-Currently stubbed but not wired into `01_latency.py`: `iree_rocm()`, `iree_vulkan()`
-— they are ready to use once the corresponding driver is available.
-`IREE_VMVX` is fully wired and selectable via `--backends iree-vmvx`.
+```python
+#!/usr/bin/env python3
+"""One-line description of the circuit."""
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import cudaq
+from benchmarks.runner import benchmark_cli
+
+def make_my_kernel(n_qubits: int):
+    kernel = cudaq.make_kernel()
+    q = kernel.qalloc(n_qubits)
+    # ... define gates ...
+    return kernel
+
+if __name__ == "__main__":
+    benchmark_cli("MyCircuit", make_my_kernel)
+```
+
+All CLI flags (`--backends`, `--qubit-counts`, `--runs`, `--plot`, …), CSV
+saving, and plotting are handled by `runner.py` automatically.
+
+## Adding a new hardware backend
+
+All backend definitions live in `backends.py`. To add a new target (e.g. Metal,
+ROCm with a specific chip):
+
+1. Define a factory function or constant in `backends.py`:
+
+   ```python
+   def iree_metal() -> IREEBackend:
+       return IREEBackend(name="iree-metal", target_backend="metal", driver="metal")
+   ```
+
+2. Add a `case` to `resolve_backend()` in `backends.py`.
+3. Add the name string to `KNOWN_BACKENDS` in `backends.py`.
+
+That is all — `runner.py` and the benchmark scripts need no changes. The new
+backend becomes immediately available via `--backends iree-metal`.
+
+Currently available backends: `iree-cpu`, `iree-cuda`, `iree-rocm`,
+`iree-vulkan`, `iree-metal`, `iree-vmvx`, `cudaq-cpu`, `cudaq-gpu`.
 
 ## Reproducibility (paper use)
 

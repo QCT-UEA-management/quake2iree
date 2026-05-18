@@ -35,17 +35,22 @@ def _load_csv(csv_path: Path) -> dict[str, dict[int, dict[str, float]]]:
     data: dict[str, dict[int, dict[str, float]]] = defaultdict(dict)
     with open(csv_path, newline="") as f:
         for row in csv.DictReader(f):
-            n = int(row["n_qubits"])
+            n    = int(row["n_qubits"])
+            mean = float(row["mean_us"])
+            std  = float(row["std_us"])
             data[row["backend"]][n] = {
-                "mean_us": float(row["mean_us"]),
-                "std_us":  float(row["std_us"]),
-                "min_us":  float(row["min_us"]),
+                "compile_ms": float(row.get("compile_ms", 0)),
+                "mean_us":    mean,
+                "median_us":  float(row.get("median_us", mean)),
+                "std_us":     std,
+                "p95_us":     float(row.get("p95_us", mean + std)),
+                "min_us":     float(row["min_us"]),
             }
     return data
 
 
 def plot_latency(csv_path: Path, output_path: Path | None = None) -> None:
-    """Plot mean execution time ± 1 std vs qubit count for all backends."""
+    """Plot median execution time with [median, p95] band vs qubit count."""
     data = _load_csv(csv_path)
     if not data:
         raise ValueError(f"No data found in {csv_path}")
@@ -53,22 +58,20 @@ def plot_latency(csv_path: Path, output_path: Path | None = None) -> None:
     fig, ax = plt.subplots(figsize=(9, 5))
 
     for backend, by_n in sorted(data.items()):
-        ns    = sorted(by_n)
-        means = [by_n[n]["mean_us"] for n in ns]
-        stds  = [by_n[n]["std_us"]  for n in ns]
-        lo    = [m - s for m, s in zip(means, stds)]
-        hi    = [m + s for m, s in zip(means, stds)]
+        ns      = sorted(by_n)
+        medians = [by_n[n]["median_us"] for n in ns]
+        p95s    = [by_n[n]["p95_us"]    for n in ns]
 
         style = _STYLE.get(backend, _DEFAULT_STYLE)
-        ax.plot(ns, means, label=backend, linewidth=1.8, **style)
-        ax.fill_between(ns, lo, hi, alpha=0.12, color=style["color"])
+        ax.plot(ns, medians, label=backend, linewidth=1.8, **style)
+        ax.fill_between(ns, medians, p95s, alpha=0.12, color=style["color"])
 
     ax.set_yscale("log")
     ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
     ax.yaxis.get_major_formatter().set_scientific(False)
 
     ax.set_xlabel("Qubits", fontsize=11)
-    ax.set_ylabel("Execution time (µs)", fontsize=11)
+    ax.set_ylabel("Execution time (µs, median)", fontsize=11)
     ax.set_title("Kernel execution latency — GHZ circuit", fontsize=12)
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
     ax.grid(True, which="both", linestyle=":", alpha=0.45)
@@ -82,6 +85,41 @@ def plot_latency(csv_path: Path, output_path: Path | None = None) -> None:
     print(f"Saved plot: {dest}")
 
 
+def plot_compile_time(csv_path: Path, output_path: Path | None = None) -> None:
+    """Plot IREE compilation time vs qubit count (CUDA-Q JIT cost not measurable)."""
+    data = _load_csv(csv_path)
+    iree_data = {b: d for b, d in data.items()
+                 if any(v["compile_ms"] > 0 for v in d.values())}
+    if not iree_data:
+        print("No compile_ms data found — skipping compile-time plot.")
+        return
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+
+    for backend, by_n in sorted(iree_data.items()):
+        ns  = sorted(by_n)
+        cms = [by_n[n]["compile_ms"] for n in ns]
+        style = _STYLE.get(backend, _DEFAULT_STYLE)
+        ax.plot(ns, cms, label=backend, linewidth=1.8,
+                marker=style["marker"], color=style["color"],
+                linestyle=style["linestyle"])
+
+    ax.set_xlabel("Qubits", fontsize=11)
+    ax.set_ylabel("Compilation time (ms)", fontsize=11)
+    ax.set_title("AOT compilation time — GHZ circuit (CUDA-Q JIT not shown)", fontsize=12)
+    ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+    ax.grid(True, which="both", linestyle=":", alpha=0.45)
+    ax.legend(loc="upper left", fontsize=9, framealpha=0.85)
+
+    fig.tight_layout()
+
+    dest = output_path or csv_path.with_suffix("").with_name(
+        csv_path.stem + "_compile.png")
+    fig.savefig(dest, dpi=150)
+    plt.close(fig)
+    print(f"Saved compile plot: {dest}")
+
+
 if __name__ == "__main__":
     csv_file = Path(sys.argv[1]) if len(sys.argv) > 1 else None
     if csv_file is None:
@@ -89,3 +127,4 @@ if __name__ == "__main__":
         sys.exit(1)
     out_file = Path(sys.argv[2]) if len(sys.argv) > 2 else None
     plot_latency(csv_file, out_file)
+    plot_compile_time(csv_file)
