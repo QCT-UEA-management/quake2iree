@@ -11,6 +11,7 @@ quality plots with `plots.py`.
 | `backends.py` | Backend registry — `IREEBackend` and `CUDAQBackend` descriptors |
 | `runner.py` | Timing harness — in-process compile + statistical timing loop |
 | `01_latency.py` | GHZ latency sweep across qubit counts and backends |
+| `02_parametric.py` | Hardware-efficient ansatz with runtime angles — amortisation sweep |
 | `plots.py` | Matplotlib plot generator from result CSVs |
 | `results/` | Committed result CSVs (one file per run / hardware config) |
 
@@ -34,12 +35,16 @@ This is the safest starting point. It runs both IREE and CUDA-Q on CPU so you
 can compare them without needing a GPU or CUDA driver.
 
 ```bash
+# Fixed-circuit benchmark (GHZ)
 python3 benchmarks/01_latency.py --no-cuda
+
+# Parametric benchmark (hardware-efficient ansatz with runtime angles)
+python3 benchmarks/02_parametric.py --no-cuda
 ```
 
-By default this sweeps qubit counts `2,4,6,8,10,12`, runs 200 timed calls per
-measurement (after 20 warmup calls), and writes a CSV to
-`benchmarks/results/latency_YYYY-MM-DD.csv`.
+Both scripts sweep qubit counts `2,4,6,8,10,12` by default, run 200 timed
+calls per measurement (after 20 warmup calls), and write a CSV to
+`benchmarks/results/<circuit>_YYYY-MM-DD.csv`.
 
 ### 3. Choosing which backends to run
 
@@ -79,35 +84,37 @@ python3 benchmarks/01_latency.py --output benchmarks/results/my_run.csv
 
 ### 5. Generating plots
 
-Add `--plot` to any command to produce two PNGs alongside the CSV:
+Add `--plot` to any command to produce PNGs alongside the CSV:
 
 ```bash
 python3 benchmarks/01_latency.py --no-cuda --plot
+python3 benchmarks/02_parametric.py --no-cuda --plot
 ```
 
-This generates:
+`01_latency.py --plot` generates two figures:
 
 - `<name>.png` — kernel execution latency (median line, shaded to p95)
 - `<name>_compile.png` — IREE AOT compilation time vs qubit count
 
+`02_parametric.py --plot` generates three figures (the two above plus):
+
+- `<name>_total.png` — total wall time (compile + N × exec) vs number of
+  evaluations, showing the crossover point where IREE's AOT cost pays off
+
 To plot an existing CSV without re-running the benchmark:
 
 ```bash
-# Generates both plots from an existing CSV
-python3 benchmarks/plots.py benchmarks/results/ghz_2026-05-18.csv
+# Generates all applicable plots from an existing CSV
+python3 benchmarks/plots.py benchmarks/results/parametric-hea_2026-05-18.csv
 
-# Execution latency plot only
+# Individual plots
 python3 -c "
 from pathlib import Path
-from benchmarks.plots import plot_latency
-plot_latency(Path('benchmarks/results/ghz_2026-05-18.csv'))
-"
-
-# Compilation time plot only
-python3 -c "
-from pathlib import Path
-from benchmarks.plots import plot_compile_time
-plot_compile_time(Path('benchmarks/results/ghz_2026-05-18.csv'))
+from benchmarks.plots import plot_latency, plot_compile_time, plot_total_time
+csv = Path('benchmarks/results/parametric-hea_2026-05-18.csv')
+plot_latency(csv)       # <name>.png
+plot_compile_time(csv)  # <name>_compile.png  (IREE only)
+plot_total_time(csv)    # <name>_total.png    (crossover chart)
 "
 ```
 
@@ -150,7 +157,9 @@ into the warmup phase.
 ## Adding a new benchmark circuit
 
 Create a new file `benchmarks/NN_name.py`. It only needs a kernel factory
-and one call to `benchmark_cli`:
+and one call to `benchmark_cli`.
+
+**Non-parametric circuit** (fixed gates, no runtime angles):
 
 ```python
 #!/usr/bin/env python3
@@ -171,6 +180,24 @@ def make_my_kernel(n_qubits: int):
 
 if __name__ == "__main__":
     benchmark_cli("MyCircuit", make_my_kernel)
+```
+
+**Parametric circuit** (runtime angles, e.g. for VQE/QAOA inner loops):
+
+```python
+def make_my_kernel(n_qubits: int):
+    n_params = n_qubits  # or however many angles you need
+    result = cudaq.make_kernel(*([float] * n_params))
+    kernel, *thetas = result
+    q = kernel.qalloc(n_qubits)
+    for i, theta in enumerate(thetas):
+        kernel.ry(theta, q[i])
+    # Fixed representative values — exec time is angle-independent.
+    fixed_angles = [0.785398] * n_params
+    return kernel, fixed_angles  # return tuple; runner.py detects it
+
+if __name__ == "__main__":
+    benchmark_cli("MyParametric", make_my_kernel, extra_plots=["total_time"])
 ```
 
 All CLI flags (`--backends`, `--qubit-counts`, `--runs`, `--plot`, …), CSV

@@ -105,10 +105,16 @@ def time_iree(
     backend: IREEBackend,
     n_qubits: int,
     *,
+    kernel_args: list | None = None,
     warmup: int = 20,
     n: int = 200,
 ) -> TimingResult:
-    """Time in-process IREE kernel execution and return statistics."""
+    """Time in-process IREE kernel execution and return statistics.
+
+    kernel_args are prepended before the statevector (e.g. rotation angles
+    for parametric kernels). Pass fixed values — execution time is independent
+    of the specific angle values chosen.
+    """
     config = ireert.Config(driver_name=backend.driver)
     ctx = ireert.SystemContext(config=config)
     ctx.add_vm_module(ireert.VmModule.copy_buffer(ctx.instance, vmfb))
@@ -120,13 +126,15 @@ def time_iree(
     init_sv = np.zeros(n_f32, dtype=np.float32)
     init_sv[0] = 1.0
 
+    args = list(kernel_args or []) + [init_sv]
+
     for _ in range(warmup):
-        fn(init_sv)
+        fn(*args)
 
     samples: list[float] = []
     for _ in range(n):
         t0 = time.perf_counter()
-        fn(init_sv)
+        fn(*args)
         samples.append((time.perf_counter() - t0) * 1e6)
 
     return _stats(backend.name, n_qubits, samples)
@@ -199,20 +207,31 @@ def run_sweep(
 ) -> list[TimingResult]:
     """Sweep qubit counts across backends, printing live results.
 
-    kernel_factory(n_qubits) must return a compiled CUDA-Q kernel for n qubits.
+    kernel_factory(n_qubits) may return either:
+      - a CUDA-Q kernel                    (non-parametric circuits)
+      - (kernel, kernel_args)  tuple        (parametric circuits)
+
+    kernel_args is forwarded to both time_iree and time_cudaq so parametric
+    kernels receive their angle values without modifying the rest of the
+    infrastructure.  Existing non-parametric factories are unaffected.
     """
     results: list[TimingResult] = []
 
     for n in qubit_counts:
         print(f"\n  n_qubits = {n}")
-        kernel = kernel_factory(n)
+        factory_result = kernel_factory(n)
+        if isinstance(factory_result, tuple):
+            kernel, kernel_args = factory_result
+        else:
+            kernel, kernel_args = factory_result, None
 
         for backend in iree_backends:
             try:
                 t0 = time.perf_counter()
                 vmfb, func_name = compile_for_iree(kernel, backend)
                 compile_ms = (time.perf_counter() - t0) * 1e3
-                r = time_iree(vmfb, func_name, backend, n, warmup=warmup, n=n_runs)
+                r = time_iree(vmfb, func_name, backend, n,
+                              kernel_args=kernel_args, warmup=warmup, n=n_runs)
                 r = replace(r, compile_ms=compile_ms)
                 print(f"    {r.backend:<18} compile {r.compile_ms:6.0f} ms | "
                       f"median {r.median_us:8.1f}  p95 {r.p95_us:.1f} µs")
@@ -222,7 +241,8 @@ def run_sweep(
 
         for backend in cudaq_backends:
             try:
-                r = time_cudaq(backend, kernel, n, warmup=warmup, n=n_runs)
+                r = time_cudaq(backend, kernel, n,
+                               kernel_args=kernel_args, warmup=warmup, n=n_runs)
                 print(f"    {r.backend:<18} median {r.median_us:8.1f}  p95 {r.p95_us:.1f} µs")
                 results.append(r)
             except Exception as exc:
@@ -297,12 +317,18 @@ def _resolve_backends(args) -> tuple[list[IREEBackend], list[CUDAQBackend]]:
 def benchmark_cli(
     circuit_name: str,
     kernel_factory: Callable[[int], object],
+    extra_plots: list[str] | None = None,
 ) -> None:
     """Standard CLI entry point for a benchmark script.
 
     Handles argparse, backend resolution, the qubit-count sweep, CSV saving,
     and optional plotting. The caller only needs to supply a circuit name and
     a factory function that builds a CUDA-Q kernel for a given qubit count.
+    The factory may return a plain kernel or a (kernel, kernel_args) tuple
+    for parametric circuits.
+
+    extra_plots: optional list of additional plot types to generate with
+    --plot.  Currently supported: "total_time".
 
     Example usage in a benchmark script::
 
@@ -361,10 +387,12 @@ def benchmark_cli(
 
     if args.plot:
         try:
-            from benchmarks.plots import plot_latency, plot_compile_time
+            from benchmarks.plots import plot_latency, plot_compile_time, plot_total_time
             plot_path = output_path.with_suffix(".png")
             plot_latency(output_path, plot_path)
             print(f"Plot:    {plot_path}")
             plot_compile_time(output_path)
+            if extra_plots and "total_time" in extra_plots:
+                plot_total_time(output_path)
         except ImportError as exc:
             print(f"Plotting skipped: {exc}")
