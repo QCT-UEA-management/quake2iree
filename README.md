@@ -81,6 +81,11 @@ python3 examples/01_bell.py
 Each script prints the intermediate IR at every stage and stops with a
 descriptive error at the first failure, so you can immediately see where the pipeline breaks and why.
 
+## Contributors
+
+- Mario Hernandez Vera — mario.hernandezvera@lrz.de
+- Marco De Pascal — marco.depascale@munich-quantum-valley.de
+
 ## Contribution Guidelines
 
 Have first a look at our documentation on [dialect conversion](docs/how_to_convert.md)
