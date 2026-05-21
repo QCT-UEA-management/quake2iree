@@ -242,6 +242,60 @@ static Value buildApplyCNOT(OpBuilder &b, Location loc, Value sv,
       ReassociationIndices{{0, 1, 2, 3}});
 }
 
+// Controlled-R1(λ): apply [[1,0],[0,exp(iλ)]] to tgt when ctrl=|1⟩.
+// c = cos(λ), s = sin(λ) as f32 Values.
+static Value buildApplyCR1(OpBuilder &b, Location loc, Value sv,
+                            int64_t nQubits, int64_t ctrlIdx, int64_t tgtIdx,
+                            Value c, Value s) {
+  MLIRContext *ctx = b.getContext();
+  auto f32Ty = Float32Type::get(ctx);
+
+  int64_t nCU = 1LL << (nQubits - ctrlIdx - 1);
+  int64_t nCL = 1LL << ctrlIdx;
+
+  // ── 1. Reshape sv to expose the ctrl qubit.
+  auto sv4dTy = RankedTensorType::get({nCU, 2, nCL, 2}, f32Ty);
+  Value sv4d = b.create<tensor::ExpandShapeOp>(loc, sv4dTy, sv,
+      ReassociationIndices{{0, 1, 2, 3}});
+
+  // ── 2. Extract the ctrl=1 sub-tensor (rank-reduced: drops ctrl dim).
+  auto sliceTy = RankedTensorType::get({nCU, nCL, 2}, f32Ty);
+  SmallVector<OpFoldResult> off = {b.getIndexAttr(0),   b.getIndexAttr(1),
+                                   b.getIndexAttr(0),   b.getIndexAttr(0)};
+  SmallVector<OpFoldResult> sz  = {b.getIndexAttr(nCU), b.getIndexAttr(1),
+                                   b.getIndexAttr(nCL), b.getIndexAttr(2)};
+  SmallVector<OpFoldResult> st  = {b.getIndexAttr(1),   b.getIndexAttr(1),
+                                   b.getIndexAttr(1),   b.getIndexAttr(1)};
+  Value sv_ctrl1 = b.create<tensor::ExtractSliceOp>(loc, sliceTy, sv4d, off, sz, st);
+
+  // ── 3. Collapse ctrl=1 slice to flat (n-1)-qubit statevector.
+  int64_t nSubF32 = 2LL * (1LL << (nQubits - 1));
+  auto subFlatTy = RankedTensorType::get({nSubF32}, f32Ty);
+  Value sv_sub = b.create<tensor::CollapseShapeOp>(loc, subFlatTy, sv_ctrl1,
+      ReassociationIndices{{0, 1, 2}});
+
+  // ── 4. Apply R1(λ) = [[1,0],[0,c+is]] on tgt within (n-1)-qubit subspace.
+  int64_t effTgt = (ctrlIdx < tgtIdx) ? tgtIdx - 1 : tgtIdx;
+  Value zero = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
+  Value one  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 1.f));
+  Value sv_sub_new = buildApplyUnitaryV(b, loc, sv_sub, nQubits - 1, effTgt,
+      one, zero, zero, zero,
+      zero, zero, c, s);
+
+  // ── 5. Expand updated subspace back to the 3D slice shape.
+  Value sv_ctrl1_new = b.create<tensor::ExpandShapeOp>(loc, sliceTy, sv_sub_new,
+      ReassociationIndices{{0, 1, 2}});
+
+  // ── 6. Insert the updated ctrl=1 slice back into the 4D tensor.
+  Value sv4d_new = b.create<tensor::InsertSliceOp>(loc, sv_ctrl1_new, sv4d,
+      off, sz, st);
+
+  // ── 7. Collapse the 4D tensor back to flat.
+  auto flatTy = sv.getType().cast<RankedTensorType>();
+  return b.create<tensor::CollapseShapeOp>(loc, flatTy, sv4d_new,
+      ReassociationIndices{{0, 1, 2, 3}});
+}
+
 // Deterministic Z-basis measurement bit: true when P(qubit=1) > 0.5.
 // This is correct for basis states and intentionally not stochastic yet.
 static Value buildMeasureZBit(OpBuilder &b, Location loc, Value sv,
@@ -623,8 +677,9 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         toErase.push_back(op);
 
       } else if (auto r1 = dyn_cast<quake::R1Op>(op)) {
-        if (!r1.getControls().empty())
-          return op->emitError("controlled-R1 not yet supported");
+        auto ctrls = r1.getControls();
+        if (ctrls.size() > 1)
+          return op->emitError("R1 with >1 controls not yet supported");
         Value angleVal = r1.getParameters()[0];
         Value ref = r1.getTargets()[0];
         auto it = refInfo.find(ref);
@@ -634,29 +689,50 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
         Value sv = veqToSv[veq];
         Value new_sv;
-        if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
-          // Constant path: fold trig at conversion time.
+        if (ctrls.size() == 1) {
+          // Controlled-R1: apply phase gate to tgt only when ctrl=|1⟩.
+          Value ctrlRef = ctrls[0];
+          auto cit = refInfo.find(ctrlRef);
+          if (cit == refInfo.end())
+            return op->emitError("CR1: control ref not found in refInfo");
+          int64_t ctrlQi = cit->second.second;
+          if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+            double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+            if (r1.isAdj()) lam *= -1.0;
+            auto f32Ty = Float32Type::get(b.getContext());
+            Value c = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, (float)std::cos(lam)));
+            Value s = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, (float)std::sin(lam)));
+            new_sv = buildApplyCR1(b, loc, sv, nQubits, ctrlQi, qi, c, s);
+          } else {
+            auto f64Ty = b.getF64Type();
+            Value lam = asF64(b, loc, angleVal);
+            if (r1.isAdj()) {
+              Value neg1 = b.create<arith::ConstantOp>(loc, FloatAttr::get(f64Ty, -1.0));
+              lam = b.create<arith::MulFOp>(loc, lam, neg1);
+            }
+            auto [c, s] = buildCosSin(b, loc, lam);
+            new_sv = buildApplyCR1(b, loc, sv, nQubits, ctrlQi, qi, c, s);
+          }
+        } else if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+          // Uncontrolled, constant angle: fold trig at conversion time.
           double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
           if (r1.isAdj()) lam *= -1.0;
           double c = std::cos(lam), s = std::sin(lam);
-          // R1(λ) = [[1, 0], [0, exp(iλ)]]
           new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
               1.f, 0.f,       0.f, 0.f,
               0.f, 0.f, (float)c, (float)s);
         } else {
-          // Dynamic path: runtime angle via math.cos / math.sin.
+          // Uncontrolled, dynamic angle: runtime math.cos / math.sin.
           auto f64Ty = b.getF64Type();
           auto f32Ty = Float32Type::get(b.getContext());
           Value lam = asF64(b, loc, angleVal);
           if (r1.isAdj()) {
-            Value neg1 = b.create<arith::ConstantOp>(
-                loc, FloatAttr::get(f64Ty, -1.0));
+            Value neg1 = b.create<arith::ConstantOp>(loc, FloatAttr::get(f64Ty, -1.0));
             lam = b.create<arith::MulFOp>(loc, lam, neg1);
           }
           auto [c, s] = buildCosSin(b, loc, lam);
           Value zero = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
           Value one  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 1.f));
-          // R1(λ) = [[1, 0], [0, c+i·s]]
           new_sv = buildApplyUnitaryV(b, loc, sv, nQubits, qi,
               one, zero, zero, zero,
               zero, zero, c, s);

@@ -43,6 +43,7 @@ def _load_csv(csv_path: Path) -> dict[str, dict[int, dict[str, float]]]:
                 "mean_us":    mean,
                 "median_us":  float(row.get("median_us", mean)),
                 "std_us":     std,
+                "p5_us":      float(row.get("p5_us",  max(mean - std, 0))),
                 "p95_us":     float(row.get("p95_us", mean + std)),
                 "min_us":     float(row["min_us"]),
             }
@@ -60,18 +61,19 @@ def plot_latency(csv_path: Path, output_path: Path | None = None) -> None:
     for backend, by_n in sorted(data.items()):
         ns      = sorted(by_n)
         medians = [by_n[n]["median_us"] for n in ns]
+        p5s     = [by_n[n]["p5_us"]     for n in ns]
         p95s    = [by_n[n]["p95_us"]    for n in ns]
 
         style = _STYLE.get(backend, _DEFAULT_STYLE)
         ax.plot(ns, medians, label=backend, linewidth=1.8, **style)
-        ax.fill_between(ns, medians, p95s, alpha=0.12, color=style["color"])
+        ax.fill_between(ns, p5s, p95s, alpha=0.12, color=style["color"])
 
     ax.set_yscale("log")
     ax.yaxis.set_major_formatter(mticker.ScalarFormatter())
     ax.yaxis.get_major_formatter().set_scientific(False)
 
     ax.set_xlabel("Qubits", fontsize=11)
-    ax.set_ylabel("Execution time (µs, median)", fontsize=11)
+    ax.set_ylabel("Execution time (µs, median ± p5–p95)", fontsize=11)
     ax.set_title("Kernel execution latency — GHZ circuit", fontsize=12)
     ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
     ax.grid(True, which="both", linestyle=":", alpha=0.45)

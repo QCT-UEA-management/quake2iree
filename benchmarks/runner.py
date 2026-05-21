@@ -54,6 +54,7 @@ class TimingResult:
     mean_us: float
     median_us: float
     std_us: float
+    p5_us: float
     p95_us: float
     min_us: float
     n_samples: int
@@ -178,6 +179,7 @@ def _stats(backend: str, n_qubits: int, samples: list[float],
     variance = sum((x - mean) ** 2 for x in arr) / n
     mid = n // 2
     median = arr[mid] if n % 2 else (arr[mid - 1] + arr[mid]) / 2.0
+    p5  = arr[int(0.05 * (n - 1))]
     p95 = arr[int(0.95 * (n - 1))]
     return TimingResult(
         backend=backend,
@@ -186,6 +188,7 @@ def _stats(backend: str, n_qubits: int, samples: list[float],
         mean_us=mean,
         median_us=median,
         std_us=variance ** 0.5,
+        p5_us=p5,
         p95_us=p95,
         min_us=arr[0],
         n_samples=n,
@@ -262,14 +265,14 @@ def save_csv(results: list[TimingResult], output_path: Path) -> None:
         writer = csv.writer(f)
         writer.writerow([
             "backend", "n_qubits", "compile_ms",
-            "mean_us", "median_us", "std_us", "p95_us", "min_us", "n_samples",
+            "mean_us", "median_us", "std_us", "p5_us", "p95_us", "min_us", "n_samples",
         ])
         for r in results:
             writer.writerow([
                 r.backend, r.n_qubits,
                 f"{r.compile_ms:.1f}",
                 f"{r.mean_us:.3f}", f"{r.median_us:.3f}", f"{r.std_us:.3f}",
-                f"{r.p95_us:.3f}", f"{r.min_us:.3f}",
+                f"{r.p5_us:.3f}", f"{r.p95_us:.3f}", f"{r.min_us:.3f}",
                 r.n_samples,
             ])
 
