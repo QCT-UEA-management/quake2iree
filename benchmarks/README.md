@@ -7,11 +7,13 @@ quality plots with `plots.py`.
 ## Structure
 
 | File | Role |
-|---|---|
+| --- | --- |
 | `backends.py` | Backend registry — `IREEBackend` and `CUDAQBackend` descriptors |
 | `runner.py` | Timing harness — in-process compile + statistical timing loop |
 | `01_latency.py` | GHZ latency sweep across qubit counts and backends |
 | `02_parametric.py` | Hardware-efficient ansatz with runtime angles — amortisation sweep |
+| `03_qft.py` | Quantum Fourier Transform — O(n²) CR1 gates, compile-time constant angles |
+| `04_qaoa.py` | QAOA-MaxCut on a ring graph — parametric circuit, amortisation benchmark |
 | `plots.py` | Matplotlib plot generator from result CSVs |
 | `results/` | Committed result CSVs (one file per run / hardware config) |
 
