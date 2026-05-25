@@ -9,10 +9,10 @@ in order.  Run all commands from the **repo root** (`quake2iree/`).
 
 | ID  | Title                              | Script             | Backends                          | Where to run     |
 | --- | ---------------------------------- | ------------------ | --------------------------------- | ---------------- |
-| F1a | GHZ — CPU execution latency        | `01_latency.py`    | iree-cpu, cudaq-cpu               | CPU instance     |
+| F1a | GHZ — CPU execution latency        | `01_ghz.py`    | iree-cpu, cudaq-cpu               | CPU instance     |
 | F1b | QFT — CPU execution latency        | `03_qft.py`        | iree-cpu, cudaq-cpu               | CPU instance     |
 | F1c | QAOA — CPU execution latency       | `04_qaoa.py`       | iree-cpu, cudaq-cpu               | CPU instance     |
-| F2a | GHZ — GPU execution latency        | `01_latency.py`    | iree-cuda, cudaq-gpu              | NVIDIA instance  |
+| F2a | GHZ — GPU execution latency        | `01_ghz.py`    | iree-cuda, cudaq-gpu              | NVIDIA instance  |
 | F2b | QFT — GPU execution latency        | `03_qft.py`        | iree-cuda, cudaq-gpu              | NVIDIA instance  |
 | F2c | QAOA — GPU execution latency       | `04_qaoa.py`       | iree-cuda, cudaq-gpu              | NVIDIA instance  |
 | F3  | HEA — compile cost amortisation    | `02_parametric.py` | iree-cpu, cudaq-cpu               | CPU instance     |
@@ -40,7 +40,7 @@ and two PNGs (latency + compile time).
 
 ```bash
 # F1a — GHZ
-python3 benchmarks/01_latency.py \
+python3 benchmarks/01_ghz.py \
     --backends iree-cpu,cudaq-cpu \
     --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
     --runs 500 --warmup 50 \
@@ -65,6 +65,7 @@ python3 benchmarks/04_qaoa.py \
 ```
 
 Output files:
+
 - `paper_ghz_cpu.csv` / `.png` / `_compile.png`
 - `paper_qft_cpu.csv` / `.png` / `_compile.png`
 - `paper_qaoa_cpu.csv` / `.png` / `_compile.png`
@@ -77,7 +78,7 @@ Run on the **NVIDIA instance** (see hardware section below).
 
 ```bash
 # F2a — GHZ
-python3 benchmarks/01_latency.py \
+python3 benchmarks/01_ghz.py \
     --backends iree-cuda,cudaq-gpu \
     --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
     --runs 500 --warmup 50 \
@@ -117,6 +118,7 @@ python3 benchmarks/02_parametric.py \
 ```
 
 Output files:
+
 - `paper_hea_cpu.csv` / `.png` (latency) / `_compile.png` / `_total.png`
 
 The key figure for the paper is `_total.png`: it shows the crossover point

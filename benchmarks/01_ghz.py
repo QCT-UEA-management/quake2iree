@@ -6,8 +6,8 @@ for each subsequent qubit) across a range of qubit counts. Compilation is done
 once as setup; only the kernel call is timed.
 
 Usage:
-    python3 benchmarks/01_latency.py [options]
-    python3 benchmarks/01_latency.py --help
+    python3 benchmarks/01_ghz.py [options]
+    python3 benchmarks/01_ghz.py --help
 """
 
 import sys
