@@ -38,8 +38,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --break-system-packages \
         iree-compiler \
         iree-runtime  \
-        cudaq  \
-        pytest 
+        cudaq         \
+        pytest        \
+        numpy         \
+        matplotlib
 # ---------------------------------------------------------------------------
 # Expose SSH port
 # ---------------------------------------------------------------------------

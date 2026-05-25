@@ -7,29 +7,31 @@ in order.  Run all commands from the **repo root** (`quake2iree/`).
 
 ## Figures overview
 
-| ID  | Title                              | Script             | Backends                          | Where to run     |
-| --- | ---------------------------------- | ------------------ | --------------------------------- | ---------------- |
-| F1a | GHZ — CPU execution latency        | `01_ghz.py`    | iree-cpu, cudaq-cpu               | CPU instance     |
-| F1b | QFT — CPU execution latency        | `03_qft.py`        | iree-cpu, cudaq-cpu               | CPU instance     |
-| F1c | QAOA — CPU execution latency       | `04_qaoa.py`       | iree-cpu, cudaq-cpu               | CPU instance     |
-| F2a | GHZ — GPU execution latency        | `01_ghz.py`    | iree-cuda, cudaq-gpu              | NVIDIA instance  |
-| F2b | QFT — GPU execution latency        | `03_qft.py`        | iree-cuda, cudaq-gpu              | NVIDIA instance  |
-| F2c | QAOA — GPU execution latency       | `04_qaoa.py`       | iree-cuda, cudaq-gpu              | NVIDIA instance  |
-| F3  | HEA — compile cost amortisation    | `02_parametric.py` | iree-cpu, cudaq-cpu               | CPU instance     |
-| F4  | QFT — IREE portability             | `03_qft.py`        | iree-cpu, iree-cuda, iree-rocm    | NVIDIA + AMD     |
+| ID  | Title                           | Script               | Backends                       | Where to run    |
+| --- | ------------------------------- | -------------------- | ------------------------------ | --------------- |
+| F1a | GHZ — CPU execution latency     | `01_ghz.py`      | iree-cpu, cudaq-cpu            | CPU instance    |
+| F1b | QFT — CPU execution latency     | `03_qft.py`          | iree-cpu, cudaq-cpu            | CPU instance    |
+| F1c | QAOA — CPU execution latency    | `04_qaoa.py`         | iree-cpu, cudaq-cpu            | CPU instance    |
+| F2a | GHZ — GPU execution latency     | `01_ghz.py`      | iree-cuda, cudaq-gpu           | NVIDIA instance |
+| F2b | QFT — GPU execution latency     | `03_qft.py`          | iree-cuda, cudaq-gpu           | NVIDIA instance |
+| F2c | QAOA — GPU execution latency    | `04_qaoa.py`         | iree-cuda, cudaq-gpu           | NVIDIA instance |
+| F3  | HEA — compile cost amortisation | `02_parametric.py`   | iree-cpu, cudaq-cpu            | CPU instance    |
+| F4  | QFT — IREE portability          | `03_qft.py`          | iree-cpu, iree-cuda, iree-rocm | NVIDIA + AMD    |
 
 ---
 
 ## Qubit range
 
-All sweeps use `--qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26` (13 points).
+| Figure         | Qubit counts                          | Reason for cap                                                                    |
+| -------------- | ------------------------------------- | --------------------------------------------------------------------------------- |
+| F1 CPU         | `2,4,6,8,10,12,14,16,18,20,22,24,26`  | CPU RAM is not a constraint                                                       |
+| F2 GPU         | `2,4,6,8,10,12,14,16,18,20,22,24`     | 4 GB VRAM (Quadro T1000); 26 qubits → 512 MB statevector + runtime overhead       |
+| F3 HEA         | `2,4,6,8,10,12,14,16,18,20`           | beyond 20 qubits CUDA-Q CPU timing becomes very slow                              |
+| F4 portability | `2,4,6,8,10,12,14,16,18,20,22,24`     | matches F2 GPU range for a fair comparison                                        |
 
-> **Memory note**: at 26 qubits the statevector is 2²⁶ × 8 B = 512 MB.  This
-> fits comfortably in 32 GB RAM and in a 16 GB GPU.  However, CUDA-Q CPU
-> simulation becomes very slow above ~20 qubits for QFT (O(n²) gates × 2²⁶
-> elements).  If a CUDA-Q CPU run takes too long, rerun with
-> `--qubit-counts 2,4,6,8,10,12,14,16,18,20` for the CPU-only figures and note
-> the cap in the paper.
+> **CUDA-Q CPU slow note**: QFT has O(n²) gates × 2ⁿ state elements.  Above
+> 20 qubits a single CUDA-Q call can take seconds.  With 500 runs that becomes
+> hours.  If CUDA-Q CPU runs time out, cap F1b/F1c at 20 qubits and note it.
 
 ---
 
@@ -38,12 +40,18 @@ All sweeps use `--qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26` (13 points).
 Run on any CPU instance (dev container is fine).  Each command writes a CSV
 and two PNGs (latency + compile time).
 
+> **Thermal note (laptop)**: the i7-10850H throttles under sustained load.
+> Use `--runs 200 --warmup 20` (shown below).  Run one script at a time and
+> allow a few minutes of cooling between them.  Monitor CPU temperature with `watch -n1 sensors` (requires `lm-sensors`).
+> If the frequency drops or temperature exceeds ~90 °C mid-run, results are
+> unreliable; wait for the machine to cool before rerunning.
+
 ```bash
 # F1a — GHZ
-python3 benchmarks/01_ghz.py \
+python3 benchmarks/01_latency.py \
     --backends iree-cpu,cudaq-cpu \
     --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
-    --runs 500 --warmup 50 \
+    --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_ghz_cpu.csv
 
@@ -51,7 +59,7 @@ python3 benchmarks/01_ghz.py \
 python3 benchmarks/03_qft.py \
     --backends iree-cpu,cudaq-cpu \
     --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
-    --runs 500 --warmup 50 \
+    --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_qft_cpu.csv
 
@@ -59,7 +67,7 @@ python3 benchmarks/03_qft.py \
 python3 benchmarks/04_qaoa.py \
     --backends iree-cpu,cudaq-cpu \
     --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
-    --runs 500 --warmup 50 \
+    --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_qaoa_cpu.csv
 ```
@@ -179,13 +187,13 @@ EOF
 
 **AWS g4dn.xlarge** — cheapest instance with a CUDA-capable GPU:
 
-| Spec        | Value                        |
-| ----------- | ---------------------------- |
-| GPU         | NVIDIA T4 (16 GB VRAM)       |
-| vCPUs       | 4                            |
-| RAM         | 16 GB                        |
-| On-demand   | ~$0.53 / hr                  |
-| AMI to use  | Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04) |
+| Spec       | Value                                                        |
+| ---------- | ------------------------------------------------------------ |
+| GPU        | NVIDIA T4 (16 GB VRAM)                                       |
+| vCPUs      | 4                                                            |
+| RAM        | 16 GB                                                        |
+| On-demand  | ~$0.53 / hr                                                  |
+| AMI        | Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)  |
 
 ```bash
 # Verify GPU is visible:
@@ -204,11 +212,11 @@ is the next step up.
 AWS does not offer a reliable ROCm-ready instance as of mid-2026.  Recommended
 alternatives:
 
-| Provider      | Instance / Config                          | Approx. cost  |
-| ------------- | ------------------------------------------ | ------------- |
-| **Vast.ai**   | AMD RX 7900 XTX or MI210 (filter by ROCm)  | $0.30–$1/hr   |
-| **Lambda Labs**| AMD MI250 nodes (when available)          | ~$1.50/hr     |
-| **On-premise**| Any machine with a recent AMD dGPU + ROCm  | —             |
+| Provider         | Instance / Config                         | Approx. cost |
+| ---------------- | ----------------------------------------- | ------------ |
+| **Vast.ai**      | AMD RX 7900 XTX or MI210 (filter by ROCm) | $0.30–$1/hr  |
+| **Lambda Labs**  | AMD MI250 nodes (when available)          | ~$1.50/hr    |
+| **On-premise**   | Any machine with a recent AMD dGPU + ROCm | —            |
 
 ROCm setup checklist on the AMD instance:
 
@@ -235,6 +243,86 @@ bash scripts/build.sh
 > produces a different binary.  This is exactly the point of the F4 figure:
 > the *source circuit* (quake IR) is identical; only the `--iree-hal-target-backends`
 > flag changes.
+
+---
+
+## Running on an HPC cluster with Apptainer
+
+See [docs/hpc_apptainer.md](../docs/hpc_apptainer.md) for the full setup
+guide (building the SIF, SLURM scripts, GPU passthrough, troubleshooting).
+
+The commands below assume:
+- `$REPO` = path to the cloned repo on the cluster (`~/quake2iree`)
+- `$SIF`  = `$REPO/quake2iree.sif` (built once from `quake2iree.def`)
+- q2i-opt already built via Step 2 of the guide
+
+### F1 — CPU (all three algorithms)
+
+```bash
+for SCRIPT in 01_latency.py 03_qft.py 04_qaoa.py; do
+    apptainer exec \
+        --bind $REPO:/workspaces/quake2iree \
+        $SIF \
+        python3 benchmarks/$SCRIPT \
+            --backends iree-cpu,cudaq-cpu \
+            --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
+            --runs 200 --warmup 20 --plot
+done
+```
+
+### F2 — NVIDIA GPU (all three algorithms)
+
+```bash
+for SCRIPT in 01_latency.py 03_qft.py 04_qaoa.py; do
+    apptainer exec --nv \
+        --bind $REPO:/workspaces/quake2iree \
+        $SIF \
+        python3 benchmarks/$SCRIPT \
+            --backends iree-cuda,cudaq-gpu \
+            --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+            --runs 200 --warmup 20 --plot
+done
+```
+
+### F3 — HEA amortisation
+
+```bash
+apptainer exec \
+    --bind $REPO:/workspaces/quake2iree \
+    $SIF \
+    python3 benchmarks/02_parametric.py \
+        --backends iree-cpu,cudaq-cpu \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20 \
+        --runs 200 --warmup 20 --plot \
+        --output benchmarks/results/paper_hea_cpu.csv
+```
+
+### F4 — QFT portability
+
+```bash
+# NVIDIA leg (run on NVIDIA node):
+apptainer exec --nv \
+    --bind $REPO:/workspaces/quake2iree \
+    $SIF \
+    python3 benchmarks/03_qft.py \
+        --backends iree-cpu,iree-cuda \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+        --runs 200 --warmup 20 \
+        --output benchmarks/results/paper_qft_portability_nvidia.csv
+
+# AMD leg (run on AMD node):
+apptainer exec --rocm \
+    --bind $REPO:/workspaces/quake2iree \
+    $SIF \
+    python3 benchmarks/03_qft.py \
+        --backends iree-rocm \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+        --runs 200 --warmup 20 \
+        --output benchmarks/results/paper_qft_portability_amd.csv
+```
+
+After both jobs complete, copy the CSVs to one machine and run the merge
+snippet in the **F4** section above to produce the combined plot.
 
 ---
 
