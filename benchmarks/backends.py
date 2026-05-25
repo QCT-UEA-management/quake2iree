@@ -7,7 +7,7 @@ on a specific device. Adding a new backend requires only two steps here:
 No changes to runner.py are needed.
 
 IREE target-backend strings: llvm-cpu, cuda, rocm, vulkan-spirv, metal, vmvx
-IREE driver strings:          local-task, cuda, rocm, vulkan, metal, local-task
+IREE driver strings:          local-task, cuda, hip, vulkan, metal, local-task
 """
 
 from __future__ import annotations
@@ -84,16 +84,20 @@ CUDAQ_GPU = CUDAQBackend(name="cudaq-gpu", target="nvidia")
 # ---------------------------------------------------------------------------
 
 def iree_rocm(target_chip: str = "gfx1100") -> IREEBackend:
-    """IREE ROCm backend for AMD GPUs.
+    """IREE ROCm/HIP backend for AMD GPUs.
+
+    iree-compile target backend is still "rocm"; the runtime driver was
+    renamed to "hip" in recent IREE releases.  The compile flag also changed:
+    --iree-hip-target replaces the old --iree-rocm-target-chip.
 
     Pass the GFX chip string for your GPU, e.g. 'gfx906' (MI50),
-    'gfx908' (MI100), 'gfx90a' (MI250), 'gfx1100' (RX 7900).
+    'gfx908' (MI100), 'gfx90a' (MI250), 'gfx1100' (RX 7900 / RDNA3).
     """
     return IREEBackend(
         name="iree-rocm",
         target_backend="rocm",
-        driver="rocm",
-        extra_compile_args=(f"--iree-rocm-target-chip={target_chip}",),
+        driver="hip",
+        extra_compile_args=(f"--iree-hip-target={target_chip}",),
     )
 
 
