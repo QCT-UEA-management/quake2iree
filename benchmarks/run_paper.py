@@ -13,10 +13,7 @@ Phase 1 (simultaneous):
   GPU group  — F2a → F2b → F2c run serially on the A100 (foreground).
   Both groups overlap freely: the CPU is near-idle during GPU runs.
 
-Phase 2 (after GPU group finishes):
-  F4 portability — iree-cpu + iree-cuda (GPU is now free).
-
-Phase 3:
+Phase 2:
   Wait for CPU background jobs, then report.
 
 Expected wall time (paper run): ~4-6 h  (vs. ~12-16 h serial)
@@ -205,22 +202,7 @@ def run_gpu_jobs(cfg: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — F4 portability (NVIDIA leg)
-# ---------------------------------------------------------------------------
-
-def run_f4(cfg: argparse.Namespace) -> None:
-    log("Phase 2 — F4 QFT portability (iree-cpu + iree-cuda) ...")
-    prefix = "test_" if cfg.test else "paper_"
-    _run_foreground(_build_cmd(
-        "03_qft.py", "iree-cpu,iree-cuda",
-        cfg.qubits, cfg.runs, cfg.warmup,
-        f"{prefix}qft_portability_nvidia.csv", plot=False,
-    ))
-    log("  F4 NVIDIA leg done. Merge with AMD results when available.")
-
-
-# ---------------------------------------------------------------------------
-# Phase 3 — collect CPU background jobs
+# Phase 2 — collect CPU background jobs
 # ---------------------------------------------------------------------------
 
 def wait_cpu_jobs(procs: list[tuple[subprocess.Popen, str]]) -> None:
@@ -279,7 +261,6 @@ def main() -> None:
 
     if run_mode in ("gpu", "all"):
         run_gpu_jobs(cfg)
-        run_f4(cfg)
 
     if cpu_procs:
         wait_cpu_jobs(cpu_procs)
