@@ -35,12 +35,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 # IREE compiler + runtime (Python packages — self-contained, no LLVM conflict)
 # ---------------------------------------------------------------------------
-RUN pip3 install --break-system-packages \
+RUN python3 -m pip install --break-system-packages \
+        --extra-index-url https://pypi.nvidia.com \
         iree-compiler \
-        iree-runtime  \
-        cudaq         \
-        pytest        \
-        numpy         \
+        iree-runtime \
+        "cuda-quantum-cu12>=0.13.0" \
+        pytest \
+        numpy \
         matplotlib
 # ---------------------------------------------------------------------------
 # Expose SSH port
