@@ -3,3 +3,4 @@ __pycache__/
 .vscode
 benchmarks/results/*.csv
 benchmarks/results/*.png
+benchmarks/results/*.log
