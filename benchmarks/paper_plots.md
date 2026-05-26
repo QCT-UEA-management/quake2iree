@@ -48,7 +48,7 @@ and two PNGs (latency + compile time).
 
 ```bash
 # F1a — GHZ
-python3 benchmarks/01_latency.py \
+python3 benchmarks/01_ghz.py \
     --backends iree-cpu,cudaq-cpu \
     --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
     --runs 200 --warmup 20 \
@@ -259,7 +259,7 @@ The commands below assume:
 ### F1 — CPU (all three algorithms)
 
 ```bash
-for SCRIPT in 01_latency.py 03_qft.py 04_qaoa.py; do
+for SCRIPT in 01_ghz.py 03_qft.py 04_qaoa.py; do
     apptainer exec \
         --bind $REPO:/workspaces/quake2iree \
         $SIF \
@@ -273,7 +273,7 @@ done
 ### F2 — NVIDIA GPU (all three algorithms)
 
 ```bash
-for SCRIPT in 01_latency.py 03_qft.py 04_qaoa.py; do
+for SCRIPT in 01_ghz.py 03_qft.py 04_qaoa.py; do
     apptainer exec --nv \
         --bind $REPO:/workspaces/quake2iree \
         $SIF \

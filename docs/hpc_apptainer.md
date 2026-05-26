@@ -186,7 +186,7 @@ Submit for each algorithm:
 ```bash
 mkdir -p ~/quake2iree/logs
 
-sbatch --export=BENCHMARK_SCRIPT=01_latency.py,OUTPUT_CSV=paper_ghz_cpu.csv  scripts/slurm_cpu.sh
+sbatch --export=BENCHMARK_SCRIPT=01_ghz.py,OUTPUT_CSV=paper_ghz_cpu.csv  scripts/slurm_cpu.sh
 sbatch --export=BENCHMARK_SCRIPT=03_qft.py,OUTPUT_CSV=paper_qft_cpu.csv      scripts/slurm_cpu.sh
 sbatch --export=BENCHMARK_SCRIPT=04_qaoa.py,OUTPUT_CSV=paper_qaoa_cpu.csv    scripts/slurm_cpu.sh
 ```
@@ -217,7 +217,7 @@ apptainer exec --nv \
 ```
 
 ```bash
-sbatch --export=BENCHMARK_SCRIPT=01_latency.py,OUTPUT_CSV=paper_ghz_gpu.csv  scripts/slurm_gpu_nvidia.sh
+sbatch --export=BENCHMARK_SCRIPT=01_ghz.py,OUTPUT_CSV=paper_ghz_gpu.csv  scripts/slurm_gpu_nvidia.sh
 sbatch --export=BENCHMARK_SCRIPT=03_qft.py,OUTPUT_CSV=paper_qft_gpu.csv      scripts/slurm_gpu_nvidia.sh
 sbatch --export=BENCHMARK_SCRIPT=04_qaoa.py,OUTPUT_CSV=paper_qaoa_gpu.csv    scripts/slurm_gpu_nvidia.sh
 ```
