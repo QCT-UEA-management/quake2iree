@@ -176,7 +176,7 @@ apptainer exec \
     $SIF \
     python3 benchmarks/$BENCHMARK_SCRIPT \
         --backends iree-cpu,cudaq-cpu \
-        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24,26 \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,26 \
         --runs 200 --warmup 20 --plot \
         --output benchmarks/results/$OUTPUT_CSV
 ```
@@ -211,7 +211,7 @@ apptainer exec --nv \
     $SIF \
     python3 benchmarks/$BENCHMARK_SCRIPT \
         --backends iree-cuda,cudaq-gpu \
-        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
         --runs 200 --warmup 20 --plot \
         --output benchmarks/results/$OUTPUT_CSV
 ```
@@ -242,7 +242,7 @@ apptainer exec --rocm \
     $SIF \
     python3 benchmarks/03_qft.py \
         --backends iree-rocm \
-        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
         --runs 200 --warmup 20 \
         --output benchmarks/results/paper_qft_portability_amd.csv
 ```

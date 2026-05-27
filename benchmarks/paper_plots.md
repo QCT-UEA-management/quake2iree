@@ -24,10 +24,10 @@ in order.  Run all commands from the **repo root** (`quake2iree/`).
 
 | Figure         | Qubit counts                        | Reason for cap                                                    |
 | -------------- | ----------------------------------- | ----------------------------------------------------------------- |
-| F1 CPU         | `2,4,6,8,10,12,14,16,18,20,22,24`  | Consistent with GPU range                                         |
-| F2 GPU         | `2,4,6,8,10,12,14,16,18,20,22,24`  | A100 80 GB has ample VRAM; 24 qubits → 256 MB statevector         |
+| F1 CPU         | `2,4,6,8,10,12,14,16,18,20,22`  | Consistent with GPU range                                         |
+| F2 GPU         | `2,4,6,8,10,12,14,16,18,20,22`  | A100 80 GB has ample VRAM; 24 qubits → 256 MB statevector         |
 | F3 HEA         | `2,4,6,8,10,12,14,16,18,20`        | beyond 20 qubits CUDA-Q CPU timing becomes very slow              |
-| F4 portability | `2,4,6,8,10,12,14,16,18,20,22,24`  | matches F2 GPU range for a fair comparison                        |
+| F4 portability | `2,4,6,8,10,12,14,16,18,20,22`  | matches F2 GPU range for a fair comparison                        |
 
 > **CUDA-Q CPU slow note**: QFT has O(n²) gates × 2ⁿ state elements.  Above
 > 20 qubits a single CUDA-Q call can take seconds.  With 200 runs that becomes
@@ -49,7 +49,7 @@ and two PNGs (latency + compile time).
 # F1a — GHZ
 python3 benchmarks/01_ghz.py \
     --backends iree-cpu,cudaq-cpu \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_ghz_cpu.csv
@@ -57,7 +57,7 @@ python3 benchmarks/01_ghz.py \
 # F1b — QFT
 python3 benchmarks/03_qft.py \
     --backends iree-cpu,cudaq-cpu \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_qft_cpu.csv
@@ -65,7 +65,7 @@ python3 benchmarks/03_qft.py \
 # F1c — QAOA-MaxCut
 python3 benchmarks/04_qaoa.py \
     --backends iree-cpu,cudaq-cpu \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_qaoa_cpu.csv
@@ -87,7 +87,7 @@ Run on the **NVIDIA instance** (see hardware section below).
 # F2a — GHZ
 python3 benchmarks/01_ghz.py \
     --backends iree-cuda,cudaq-gpu \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_ghz_gpu.csv
@@ -95,7 +95,7 @@ python3 benchmarks/01_ghz.py \
 # F2b — QFT
 python3 benchmarks/03_qft.py \
     --backends iree-cuda,cudaq-gpu \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_qft_gpu.csv
@@ -103,7 +103,7 @@ python3 benchmarks/03_qft.py \
 # F2c — QAOA-MaxCut
 python3 benchmarks/04_qaoa.py \
     --backends iree-cuda,cudaq-gpu \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --plot \
     --output benchmarks/results/paper_qaoa_gpu.csv
@@ -142,14 +142,14 @@ once on the AMD instance — then merge the CSVs.
 # On NVIDIA instance (adds iree-cpu and iree-cuda rows):
 python3 benchmarks/03_qft.py \
     --backends iree-cpu,iree-cuda \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --output benchmarks/results/paper_qft_portability_nvidia.csv
 
 # On AMD instance (adds iree-rocm rows):
 python3 benchmarks/03_qft.py \
     --backends iree-rocm \
-    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+    --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
     --runs 200 --warmup 20 \
     --output benchmarks/results/paper_qft_portability_amd.csv
 
@@ -251,6 +251,7 @@ See [docs/hpc_apptainer.md](../docs/hpc_apptainer.md) for the full setup
 guide (building the SIF, SLURM scripts, GPU passthrough, troubleshooting).
 
 The commands below assume:
+
 - `$REPO` = path to the cloned repo on the cluster (`~/quake2iree`)
 - `$SIF`  = `$REPO/quake2iree.sif` (built once from `quake2iree.def`)
 - q2i-opt already built via Step 2 of the guide
@@ -271,7 +272,7 @@ for SCRIPT in 01_ghz.py 03_qft.py 04_qaoa.py; do
         $SIF \
         python3 benchmarks/$SCRIPT \
             --backends iree-cpu,cudaq-cpu \
-            --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+            --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
             --runs 200 --warmup 20 --plot
 done
 ```
@@ -292,7 +293,7 @@ for SCRIPT in 01_ghz.py 03_qft.py 04_qaoa.py; do
         $SIF \
         python3 benchmarks/$SCRIPT \
             --backends iree-cuda,cudaq-gpu \
-            --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+            --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
             --runs 200 --warmup 20 --plot
 done
 ```
@@ -320,7 +321,7 @@ apptainer exec --nv \
     $SIF \
     python3 benchmarks/03_qft.py \
         --backends iree-cpu,iree-cuda \
-        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
         --runs 200 --warmup 20 \
         --output benchmarks/results/paper_qft_portability_nvidia.csv
 
@@ -330,7 +331,7 @@ apptainer exec --rocm \
     $SIF \
     python3 benchmarks/03_qft.py \
         --backends iree-rocm \
-        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22,24 \
+        --qubit-counts 2,4,6,8,10,12,14,16,18,20,22 \
         --runs 200 --warmup 20 \
         --output benchmarks/results/paper_qft_portability_amd.csv
 ```

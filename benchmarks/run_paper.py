@@ -43,7 +43,7 @@ RESULTS = REPO / "benchmarks" / "results"
 # Run parameters
 # ---------------------------------------------------------------------------
 
-PAPER_QUBITS = "2,4,6,8,10,12,14,16,18,20,22,24"
+PAPER_QUBITS = "2,4,6,8,10,12,14,16,18,20,22"
 PAPER_RUNS   = 200
 PAPER_WARMUP = 20
 
