@@ -94,7 +94,7 @@ def _patch_expand_shape(mlir_file: Path) -> None:
                 f': tensor<{src_type}> into tensor<{dest_type}>')
 
     patched = re.sub(
-        r'(tensor\.expand_shape\s+\S+\s+\[\[[^\]]+\]\])'
+        r'(tensor\.expand_shape\s+\S+\s+\[\[(?:(?!\]\]).)+\]\])'
         r'\s*:\s*tensor<([^>]+)>\s*into\s*tensor<([^>]+)>',
         rewrite,
         text,
