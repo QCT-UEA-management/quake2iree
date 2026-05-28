@@ -87,7 +87,7 @@ def _detect_rocm_gfx() -> str:
     """Return the GFX target string for the first visible AMD GPU.
 
     Tries rocminfo first, then rocm_agent_enumerator as a fallback.
-    Returns 'gfx942' (MI300) as a safe default if detection fails.
+    Returns 'gfx90a' (MI250X) as a safe default if detection fails.
     """
     try:
         r = subprocess.run(
@@ -111,15 +111,13 @@ def _detect_rocm_gfx() -> str:
                 return line
     except Exception:
         pass
-    return "gfx942"
+    return "gfx90a"
 
 
 def iree_rocm(target_chip: str | None = None) -> IREEBackend:
-    """IREE ROCm/HIP backend for AMD GPUs.
+    """IREE ROCm/HIP backend for AMD GPUs (legacy target_backend="rocm").
 
-    iree-compile target backend is still "rocm"; the runtime driver was
-    renamed to "hip" in recent IREE releases.  The compile flag also changed:
-    --iree-hip-target replaces the old --iree-rocm-target-chip.
+    Use iree_hip() for IREE versions that renamed the target backend to "hip".
 
     When target_chip is None (default), the GFX string is detected
     automatically via rocminfo.  Pass explicitly for a specific chip, e.g.
@@ -130,6 +128,27 @@ def iree_rocm(target_chip: str | None = None) -> IREEBackend:
     return IREEBackend(
         name="iree-rocm",
         target_backend="rocm",
+        driver="hip",
+        extra_compile_args=(f"--iree-hip-target={chip}",),
+    )
+
+
+def iree_hip(target_chip: str | None = None) -> IREEBackend:
+    """IREE HIP backend for AMD GPUs (target_backend="hip", IREE >= 20240).
+
+    In recent IREE releases the ROCm compile target was renamed from "rocm"
+    to "hip".  Use this backend if iree-rocm fails with an unknown target
+    error.  The runtime driver and compile flags are identical.
+
+    When target_chip is None (default), the GFX string is detected
+    automatically via rocminfo.  Pass explicitly for a specific chip, e.g.
+    'gfx906' (MI50), 'gfx908' (MI100), 'gfx90a' (MI250X),
+    'gfx942' (MI300A/MI300X), 'gfx1100' (RX 7900 / RDNA3).
+    """
+    chip = target_chip or _detect_rocm_gfx()
+    return IREEBackend(
+        name="iree-hip",
+        target_backend="hip",
         driver="hip",
         extra_compile_args=(f"--iree-hip-target={chip}",),
     )
@@ -183,6 +202,7 @@ KNOWN_BACKENDS: frozenset[str] = frozenset({
     "iree-cpu",
     "iree-cuda",
     "iree-rocm",
+    "iree-hip",
     "iree-vulkan",
     "iree-metal",
     "iree-vmvx",
@@ -201,6 +221,7 @@ def resolve_backend(name: str) -> IREEBackend | CUDAQBackend:
         case "iree-cpu":     return IREE_CPU
         case "iree-cuda":    return iree_cuda()
         case "iree-rocm":    return iree_rocm()
+        case "iree-hip":     return iree_hip()
         case "iree-vulkan":  return iree_vulkan()
         case "iree-metal":   return iree_metal()
         case "iree-vmvx":    return IREE_VMVX
