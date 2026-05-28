@@ -83,21 +83,55 @@ CUDAQ_GPU = CUDAQBackend(name="cudaq-gpu", target="nvidia")
 # AMD ROCm
 # ---------------------------------------------------------------------------
 
-def iree_rocm(target_chip: str = "gfx1100") -> IREEBackend:
+def _detect_rocm_gfx() -> str:
+    """Return the GFX target string for the first visible AMD GPU.
+
+    Tries rocminfo first, then rocm_agent_enumerator as a fallback.
+    Returns 'gfx942' (MI300) as a safe default if detection fails.
+    """
+    try:
+        r = subprocess.run(
+            ["rocminfo"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("Name:") and "gfx" in line:
+                return line.split()[-1].strip()
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["rocm_agent_enumerator"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("gfx"):
+                return line
+    except Exception:
+        pass
+    return "gfx942"
+
+
+def iree_rocm(target_chip: str | None = None) -> IREEBackend:
     """IREE ROCm/HIP backend for AMD GPUs.
 
     iree-compile target backend is still "rocm"; the runtime driver was
     renamed to "hip" in recent IREE releases.  The compile flag also changed:
     --iree-hip-target replaces the old --iree-rocm-target-chip.
 
-    Pass the GFX chip string for your GPU, e.g. 'gfx906' (MI50),
-    'gfx908' (MI100), 'gfx90a' (MI250), 'gfx1100' (RX 7900 / RDNA3).
+    When target_chip is None (default), the GFX string is detected
+    automatically via rocminfo.  Pass explicitly for a specific chip, e.g.
+    'gfx906' (MI50), 'gfx908' (MI100), 'gfx90a' (MI250X),
+    'gfx942' (MI300A/MI300X), 'gfx1100' (RX 7900 / RDNA3).
     """
+    chip = target_chip or _detect_rocm_gfx()
     return IREEBackend(
         name="iree-rocm",
         target_backend="rocm",
         driver="hip",
-        extra_compile_args=(f"--iree-hip-target={target_chip}",),
+        extra_compile_args=(f"--iree-hip-target={chip}",),
     )
 
 
