@@ -37,8 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 RUN python3 -m pip install --break-system-packages \
         --extra-index-url https://pypi.nvidia.com \
-        iree-compiler \
-        iree-runtime \
+        iree-base-compiler \
+        iree-base-runtime \
         "cuda-quantum-cu12>=0.13.0" \
         pytest \
         numpy \
