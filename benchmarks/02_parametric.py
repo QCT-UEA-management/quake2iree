@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
 
-from benchmarks.runner import benchmark_cli
+from q2i import benchmark_cli
 
 _N_LAYERS = 2  # entangling layers; parameter count = n_qubits × _N_LAYERS
 

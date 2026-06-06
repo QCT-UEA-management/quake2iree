@@ -54,6 +54,29 @@ def strip_cudaq_run_wrappers(quake_ir: str) -> str:
     return "\n".join(output) + "\n"
 
 
+def lower(kernel) -> tuple[str, str]:
+    """Lower a CUDA-Q kernel to standard MLIR.
+
+    Convenience wrapper: emit_quake → strip → q2i_convert.
+    Returns (mlir_text, func_name). Raises RuntimeError on failure.
+    """
+    import tempfile
+
+    quake_ir  = strip_cudaq_run_wrappers(emit_quake(kernel))
+    func_name = entrypoint_name(quake_ir)
+    if not func_name:
+        raise RuntimeError("Could not find cudaq-entrypoint in quake IR")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path     = Path(tmp)
+        quake_file   = tmp_path / "kernel.mlir"
+        lowered_file = tmp_path / "kernel_lowered.mlir"
+        quake_file.write_text(quake_ir)
+        r = q2i_convert(quake_file, lowered_file)
+        if r.returncode != 0:
+            raise RuntimeError(f"q2i-opt failed:\n{r.stderr}")
+        return lowered_file.read_text(), func_name
+
+
 def q2i_convert(input_file: Path, output_file: Path) -> subprocess.CompletedProcess:
     """Lower quake dialect to standard dialects via q2i-opt.
 

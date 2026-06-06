@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
-from examples.pipeline import (
+from q2i import (
     run_i1_kernel,
     run_sample_kernel,
     run_statevector_kernel,

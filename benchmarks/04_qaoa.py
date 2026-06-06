@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
 
-from benchmarks.runner import benchmark_cli
+from q2i import benchmark_cli
 
 _P_LAYERS = 1  # QAOA depth; parameter count = 2 * _P_LAYERS
 

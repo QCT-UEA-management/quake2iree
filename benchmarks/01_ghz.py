@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
 
-from benchmarks.runner import benchmark_cli
+from q2i import benchmark_cli
 
 
 def make_ghz_kernel(n_qubits: int):
