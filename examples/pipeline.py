@@ -46,18 +46,6 @@ def _init_sv_input(n_qubits: int) -> str:
     n_f32 = 2 * (1 << n_qubits)
     return f"{n_f32}xf32=1 " + " ".join(["0"] * (n_f32 - 1))
 
-def _init_sv_input(n_qubits: int, tmp_dir: Path) -> str:
-    """Write the state vector to a .npy file and return the @path."""
-    n_f32 = 2 * (1 << n_qubits)
-    # Define the file path with .npy extension
-    sv_file = tmp_dir / "sv_input.npy"
-    # Create the array (using float32 as required by your tensor<...xf32>)
-    data = np.zeros(n_f32, dtype=np.float32)
-    data[0] = 1.0  # Set the |00...0> amplitude to 1.0
-    # Save as a numpy file
-    np.save(sv_file, data)
-    return f"@{sv_file}"
-
 def iree_compile(
     input_file: Path,
     output_file: Path,
@@ -65,15 +53,23 @@ def iree_compile(
 ) -> subprocess.CompletedProcess:
     """Compile lowered MLIR to a VMFB with iree-compile."""
     tool = shutil.which("iree-compile")
-    rocm_bc_path = "/opt/rocm-6.3.4/lib/llvm/lib/clang/18/lib/amdgcn/bitcode/"
     if not tool:
         raise RuntimeError("iree-compile not found in PATH")
-    return subprocess.run(
-        [tool, str(input_file), f"--iree-hal-target-backends={backend}", f"--iree-rocm-target=gfx90a", f"--iree-rocm-bc-dir={rocm_bc_path}", "-o", str(output_file)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    if IREE_BACKEND == "rocm":
+        rocm_bc_path = "/opt/rocm-6.3.4/lib/llvm/lib/clang/18/lib/amdgcn/bitcode/"
+        return subprocess.run(
+            [tool, str(input_file), f"--iree-hal-target-backends={backend}", f"--iree-rocm-target=gfx90a", f"--iree-rocm-bc-dir={rocm_bc_path}", "-o", str(output_file)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    else:
+        return subprocess.run(
+            [tool, str(input_file),"-o", str(output_file)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
 
 
 
@@ -88,25 +84,14 @@ def iree_run(
     for parametric kernels with runtime f64 arguments.
     """
     tool = shutil.which("iree-run-module")
-    print(args)
     if not tool:
         raise RuntimeError("iree-run-module not found in PATH")
-    cmd = [tool, f"--device=hip", f"--module={vmfb_file}", f"--function={function}"]
+    if IREE_BACKEND=="rocm":
+        cmd = [tool, f"--device=hip", f"--module={vmfb_file}", f"--function={function}"]
+    else:
+        cmd = [tool, f"--module={vmfb_file}", f"--function={function}"]
     if args:
-        # Ensure that 'args' is actually a list of flags, not just the file path
-        # It must be ['--input=@/tmp/...']
-        for a in args:
-            # If 'a' is already a full flag like '--input=@...', add as is
-            # If 'a' is just the file path '@...', add '--input=' prefix
-            if a.startswith("--input="):
-                cmd.append(a)
-            else:
-                cmd.append(f"--input={a}")
-    print(cmd)
-    #if args:
-    #    cmd += [f"--input={a}" for a in args]
-    #for i in range(100):
-    #    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        cmd += [f"--input={a}" for a in args]
     return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
@@ -172,8 +157,7 @@ def print_statevector(iree_output: str, threshold: float = 1e-5):
     The statevector is stored as flat f32: [re0, im0, re1, im1, ...].
     Prints non-zero amplitudes in |k⟩ basis notation.
     """
-    #values = parse_iree_f32_vector(iree_output)
-    values = 0
+    values = parse_iree_f32_vector(iree_output)
     if not values or len(values) % 2 != 0:
         print("  (could not parse statevector)")
         return
@@ -292,20 +276,10 @@ def run_statevector_kernel(
         n_qubits = _nqubits_from_quake(quake_ir)
         n_qubits = _nqubits_from_quake(quake_ir)
         iree_args: list[str] = [f"{v}::f64" for v in kernel_args] if kernel_args else []
-        
         if n_qubits is not None:
-            # Pass the tmp_path so the function writes the file there
-            sv_input_arg = _init_sv_input(n_qubits, tmp_path)
-            iree_args.append(sv_input_arg)
-            
+            iree_args.append(_init_sv_input(n_qubits))
         try:
-            # iree_run logic remains the same; it just sees "--input=@/tmp/..."
             result = iree_run(vmfb_file, func_name, args=iree_args or None)
-        #iree_args: list[str] = [f"{v}::f64" for v in kernel_args] if kernel_args else []
-        #if n_qubits is not None:
-        #    iree_args.append(_init_sv_input(n_qubits))
-        #try:
-        #    result = iree_run(vmfb_file, func_name, args=iree_args or None)
         except RuntimeError as exc:
             step_fail("iree-run-module", str(exc))
             return False
@@ -322,7 +296,6 @@ def run_statevector_kernel(
         print_statevector(result.stdout)
         if expected is not None:
             return check_statevector(result.stdout, expected, atol=atol)
-
     return True
 
 
