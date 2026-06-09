@@ -1,5 +1,7 @@
 build/
 __pycache__/
+.venv/
 .vscode
 benchmarks/results/*.csv
 benchmarks/results/*.png
+benchmarks/results/*.log

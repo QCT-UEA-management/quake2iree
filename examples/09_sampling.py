@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
-from examples.pipeline import banner, run_sample_kernel
+from q2i import banner, run_sample_kernel
 
 SHOTS = 1000
 

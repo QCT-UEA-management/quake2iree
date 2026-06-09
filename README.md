@@ -26,8 +26,8 @@ Any source IR that can be converted into this mix of dialects, either directly o
 A convenience script is provided at the root of the repository:
 
 ```bash
-chmod +x build.sh
-./build.sh
+chmod +x scripts/build.sh
+./scripts/build.sh
 ```
 
 This will create the `build/` directory, configure the project with CMake and Ninja, and compile it. The `q2i-opt` binary will be available at `build/tool/q2i-opt` once the build completes.
@@ -80,6 +80,11 @@ python3 examples/01_bell.py
 
 Each script prints the intermediate IR at every stage and stops with a
 descriptive error at the first failure, so you can immediately see where the pipeline breaks and why.
+
+## Contributors
+
+* Mario Hernandez Vera — <mario.hernandezvera@lrz.de>
+* Marco De Pascal — <marco.depascale@munich-quantum-valley.de>
 
 ## Contribution Guidelines
 

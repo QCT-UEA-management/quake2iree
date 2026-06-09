@@ -96,19 +96,34 @@ static Value buildApplyUnitaryV(OpBuilder &b, Location loc, Value sv,
   Value a0r = mkSlice(0, 0), a0i = mkSlice(0, 1);
   Value a1r = mkSlice(1, 0), a1i = mkSlice(1, 1);
 
-  // ── 3. linalg.generic: all-parallel 2D update over (nUpper × nLower).
-  //       4 inputs (a0r, a0i, a1r, a1i), 4 outputs — all identity maps.
-  auto idMap = AffineMap::getMultiDimIdentityMap(2, ctx);
+  // ── 3. linalg.generic: 1D parallel update over (nUpper * nLower) elements.
+  //
+  //       Flatten slices to 1D before dispatch. IREE's CUDA codegen maps a 2D
+  //       linalg.generic as (gridDim.y=nUpper, gridDim.x=nLower). When nUpper
+  //       is large (e.g. QFT CR1(ctrl=n-1, tgt=0) gives nUpper=2^(n-2)), this
+  //       exceeds CUDA's gridDim.y limit of 65535 at n>=24. A 1D kernel uses
+  //       only gridDim.x (limit 2^31-1) and preserves full parallelism since
+  //       all iterator types remain parallel. CollapseShapeOp/ExpandShapeOp are
+  //       metadata-only and fold away during IREE lowering.
+  int64_t n1D = nUpper * nLower;
+  auto flat1DTy = RankedTensorType::get({n1D}, f32Ty);
+  auto flatten  = ReassociationIndices{{0, 1}};
+  Value a0r_f = b.create<tensor::CollapseShapeOp>(loc, flat1DTy, a0r, flatten);
+  Value a0i_f = b.create<tensor::CollapseShapeOp>(loc, flat1DTy, a0i, flatten);
+  Value a1r_f = b.create<tensor::CollapseShapeOp>(loc, flat1DTy, a1r, flatten);
+  Value a1i_f = b.create<tensor::CollapseShapeOp>(loc, flat1DTy, a1i, flatten);
+
+  auto idMap = AffineMap::getMultiDimIdentityMap(1, ctx);
   SmallVector<AffineMap> maps(8, idMap);
-  SmallVector<utils::IteratorType> iters(2, utils::IteratorType::parallel);
+  SmallVector<utils::IteratorType> iters(1, utils::IteratorType::parallel);
   auto mkEmpty = [&]() -> Value {
-    return b.create<tensor::EmptyOp>(loc, ArrayRef<int64_t>{nUpper, nLower}, f32Ty);
+    return b.create<tensor::EmptyOp>(loc, ArrayRef<int64_t>{n1D}, f32Ty);
   };
 
   auto generic = b.create<linalg::GenericOp>(
       loc,
-      TypeRange{sliceTy, sliceTy, sliceTy, sliceTy},
-      ValueRange{a0r, a0i, a1r, a1i},
+      TypeRange{flat1DTy, flat1DTy, flat1DTy, flat1DTy},
+      ValueRange{a0r_f, a0i_f, a1r_f, a1i_f},
       ValueRange{mkEmpty(), mkEmpty(), mkEmpty(), mkEmpty()},
       maps, iters,
       [U00r, U00i, U01r, U01i, U10r, U10i, U11r, U11i](
@@ -131,8 +146,11 @@ static Value buildApplyUnitaryV(OpBuilder &b, Location loc, Value sv,
         nb.create<linalg::YieldOp>(nl, ValueRange{na0r_v, na0i_v, na1r_v, na1i_v});
       });
 
-  Value na0r = generic.getResult(0), na0i = generic.getResult(1);
-  Value na1r = generic.getResult(2), na1i = generic.getResult(3);
+  // Expand 1D results back to [nUpper x nLower] for insert_slice.
+  Value na0r = b.create<tensor::ExpandShapeOp>(loc, sliceTy, generic.getResult(0), flatten);
+  Value na0i = b.create<tensor::ExpandShapeOp>(loc, sliceTy, generic.getResult(1), flatten);
+  Value na1r = b.create<tensor::ExpandShapeOp>(loc, sliceTy, generic.getResult(2), flatten);
+  Value na1i = b.create<tensor::ExpandShapeOp>(loc, sliceTy, generic.getResult(3), flatten);
 
   // ── 4. Reassemble the 4D tensor from the updated slices.
   Value empty4d = b.create<tensor::EmptyOp>(loc,
@@ -201,23 +219,36 @@ static Value buildApplyCNOT(OpBuilder &b, Location loc, Value sv,
   Value sv4d = b.create<tensor::ExpandShapeOp>(loc, sv4dTy, sv,
       ReassociationIndices{{0, 1, 2, 3}});
 
-  // ── 2. Extract the ctrl=1 sub-tensor (rank-reduced: drops the size-1 ctrl dim).
-  auto sliceTy = RankedTensorType::get({nCU, nCL, 2}, f32Ty);
-  SmallVector<OpFoldResult> off = {b.getIndexAttr(0),   b.getIndexAttr(1),
-                                   b.getIndexAttr(0),   b.getIndexAttr(0)};
-  SmallVector<OpFoldResult> sz  = {b.getIndexAttr(nCU), b.getIndexAttr(1),
-                                   b.getIndexAttr(nCL), b.getIndexAttr(2)};
-  SmallVector<OpFoldResult> st  = {b.getIndexAttr(1),   b.getIndexAttr(1),
-                                   b.getIndexAttr(1),   b.getIndexAttr(1)};
-  Value sv_ctrl1 = b.create<tensor::ExtractSliceOp>(loc, sliceTy, sv4d, off, sz, st);
+  // ── 2. Collapse sv4d dims 2,3 → tensor<nCU × 2 × (nCL*2)>.
+  //       This makes the ctrl=1 extract produce a 2D tensor [nCU, nCL*2], which
+  //       IREE distributes with a 1D grid (gridDim.x only, limit 2^31-1).
+  //       A 3D [nCU, nCL, 2] extract would use gridDim.y = nCU, overflowing
+  //       CUDA's 65535 limit when nCU > 65535 (n >= 18 with ctrlIdx = 1).
+  auto sv3dTy = RankedTensorType::get({nCU, 2, nCL * 2}, f32Ty);
+  SmallVector<ReassociationIndices> outerReassoc(3);
+  outerReassoc[0].push_back(0);
+  outerReassoc[1].push_back(1);
+  outerReassoc[2].push_back(2);
+  outerReassoc[2].push_back(3);
+  Value sv_3d = b.create<tensor::CollapseShapeOp>(loc, sv3dTy, sv4d, outerReassoc);
 
-  // ── 3. Collapse ctrl=1 slice to flat (n-1)-qubit statevector.
+  // ── 3. Extract the ctrl=1 sub-tensor as 2D [nCU, nCL*2].
+  auto sliceTy = RankedTensorType::get({nCU, nCL * 2}, f32Ty);
+  SmallVector<OpFoldResult> off = {b.getIndexAttr(0),   b.getIndexAttr(1),
+                                   b.getIndexAttr(0)};
+  SmallVector<OpFoldResult> sz  = {b.getIndexAttr(nCU), b.getIndexAttr(1),
+                                   b.getIndexAttr(nCL * 2)};
+  SmallVector<OpFoldResult> st  = {b.getIndexAttr(1),   b.getIndexAttr(1),
+                                   b.getIndexAttr(1)};
+  Value sv_ctrl1 = b.create<tensor::ExtractSliceOp>(loc, sliceTy, sv_3d, off, sz, st);
+
+  // ── 4. Collapse ctrl=1 slice to flat (n-1)-qubit statevector.
   int64_t nSubF32 = 2LL * (1LL << (nQubits - 1));
   auto subFlatTy = RankedTensorType::get({nSubF32}, f32Ty);
   Value sv_sub = b.create<tensor::CollapseShapeOp>(loc, subFlatTy, sv_ctrl1,
-      ReassociationIndices{{0, 1, 2}});
+      ReassociationIndices{{0, 1}});
 
-  // ── 4. Apply X gate on the tgt qubit within the (n-1)-qubit subspace.
+  // ── 5. Apply X gate on the tgt qubit within the (n-1)-qubit subspace.
   //       Effective tgt index shifts down by 1 when ctrl was below tgt.
   int64_t effTgt = (ctrlIdx < tgtIdx) ? tgtIdx - 1 : tgtIdx;
   auto mk = [&](float v) -> Value {
@@ -228,15 +259,90 @@ static Value buildApplyCNOT(OpBuilder &b, Location loc, Value sv,
       mk(0.f), mk(0.f), mk(1.f), mk(0.f),
       mk(1.f), mk(0.f), mk(0.f), mk(0.f));
 
-  // ── 5. Expand updated subspace back to the 3D slice shape.
+  // ── 6. Expand updated subspace back to the 2D slice shape.
   Value sv_ctrl1_new = b.create<tensor::ExpandShapeOp>(loc, sliceTy, sv_sub_new,
-      ReassociationIndices{{0, 1, 2}});
+      ReassociationIndices{{0, 1}});
 
-  // ── 6. Insert the updated ctrl=1 slice back into the 4D tensor.
-  Value sv4d_new = b.create<tensor::InsertSliceOp>(loc, sv_ctrl1_new, sv4d,
+  // ── 7. Insert the updated ctrl=1 slice back into sv_3d.
+  Value sv_3d_new = b.create<tensor::InsertSliceOp>(loc, sv_ctrl1_new, sv_3d,
       off, sz, st);
 
-  // ── 7. Collapse the 4D tensor back to flat.
+  // ── 8. Expand sv_3d_new back to 4D [nCU × 2 × nCL × 2].
+  Value sv4d_new = b.create<tensor::ExpandShapeOp>(loc, sv4dTy, sv_3d_new,
+      outerReassoc);
+
+  // ── 9. Collapse the 4D tensor back to flat.
+  auto flatTy = sv.getType().cast<RankedTensorType>();
+  return b.create<tensor::CollapseShapeOp>(loc, flatTy, sv4d_new,
+      ReassociationIndices{{0, 1, 2, 3}});
+}
+
+// Controlled-R1(λ): apply [[1,0],[0,exp(iλ)]] to tgt when ctrl=|1⟩.
+// c = cos(λ), s = sin(λ) as f32 Values.
+static Value buildApplyCR1(OpBuilder &b, Location loc, Value sv,
+                            int64_t nQubits, int64_t ctrlIdx, int64_t tgtIdx,
+                            Value c, Value s) {
+  MLIRContext *ctx = b.getContext();
+  auto f32Ty = Float32Type::get(ctx);
+
+  int64_t nCU = 1LL << (nQubits - ctrlIdx - 1);
+  int64_t nCL = 1LL << ctrlIdx;
+
+  // ── 1. Reshape sv to expose the ctrl qubit.
+  auto sv4dTy = RankedTensorType::get({nCU, 2, nCL, 2}, f32Ty);
+  Value sv4d = b.create<tensor::ExpandShapeOp>(loc, sv4dTy, sv,
+      ReassociationIndices{{0, 1, 2, 3}});
+
+  // ── 2. Collapse sv4d dims 2,3 → tensor<nCU × 2 × (nCL*2)>.
+  //       This makes the ctrl=1 extract produce a 2D tensor [nCU, nCL*2], which
+  //       IREE distributes with a 1D grid (gridDim.x only, limit 2^31-1).
+  //       A 3D [nCU, nCL, 2] extract would use gridDim.y = nCU, overflowing
+  //       CUDA's 65535 limit when nCU > 65535 (n >= 18 with ctrlIdx = 1).
+  auto sv3dTy = RankedTensorType::get({nCU, 2, nCL * 2}, f32Ty);
+  SmallVector<ReassociationIndices> outerReassoc(3);
+  outerReassoc[0].push_back(0);
+  outerReassoc[1].push_back(1);
+  outerReassoc[2].push_back(2);
+  outerReassoc[2].push_back(3);
+  Value sv_3d = b.create<tensor::CollapseShapeOp>(loc, sv3dTy, sv4d, outerReassoc);
+
+  // ── 3. Extract the ctrl=1 sub-tensor as 2D [nCU, nCL*2].
+  auto sliceTy = RankedTensorType::get({nCU, nCL * 2}, f32Ty);
+  SmallVector<OpFoldResult> off = {b.getIndexAttr(0),   b.getIndexAttr(1),
+                                   b.getIndexAttr(0)};
+  SmallVector<OpFoldResult> sz  = {b.getIndexAttr(nCU), b.getIndexAttr(1),
+                                   b.getIndexAttr(nCL * 2)};
+  SmallVector<OpFoldResult> st  = {b.getIndexAttr(1),   b.getIndexAttr(1),
+                                   b.getIndexAttr(1)};
+  Value sv_ctrl1 = b.create<tensor::ExtractSliceOp>(loc, sliceTy, sv_3d, off, sz, st);
+
+  // ── 4. Collapse ctrl=1 slice to flat (n-1)-qubit statevector.
+  int64_t nSubF32 = 2LL * (1LL << (nQubits - 1));
+  auto subFlatTy = RankedTensorType::get({nSubF32}, f32Ty);
+  Value sv_sub = b.create<tensor::CollapseShapeOp>(loc, subFlatTy, sv_ctrl1,
+      ReassociationIndices{{0, 1}});
+
+  // ── 5. Apply R1(λ) = [[1,0],[0,c+is]] on tgt within (n-1)-qubit subspace.
+  int64_t effTgt = (ctrlIdx < tgtIdx) ? tgtIdx - 1 : tgtIdx;
+  Value zero = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
+  Value one  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 1.f));
+  Value sv_sub_new = buildApplyUnitaryV(b, loc, sv_sub, nQubits - 1, effTgt,
+      one, zero, zero, zero,
+      zero, zero, c, s);
+
+  // ── 6. Expand updated subspace back to the 2D slice shape.
+  Value sv_ctrl1_new = b.create<tensor::ExpandShapeOp>(loc, sliceTy, sv_sub_new,
+      ReassociationIndices{{0, 1}});
+
+  // ── 7. Insert the updated ctrl=1 slice back into sv_3d.
+  Value sv_3d_new = b.create<tensor::InsertSliceOp>(loc, sv_ctrl1_new, sv_3d,
+      off, sz, st);
+
+  // ── 8. Expand sv_3d_new back to 4D [nCU × 2 × nCL × 2].
+  Value sv4d_new = b.create<tensor::ExpandShapeOp>(loc, sv4dTy, sv_3d_new,
+      outerReassoc);
+
+  // ── 9. Collapse the 4D tensor back to flat.
   auto flatTy = sv.getType().cast<RankedTensorType>();
   return b.create<tensor::CollapseShapeOp>(loc, flatTy, sv4d_new,
       ReassociationIndices{{0, 1, 2, 3}});
@@ -623,8 +729,9 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         toErase.push_back(op);
 
       } else if (auto r1 = dyn_cast<quake::R1Op>(op)) {
-        if (!r1.getControls().empty())
-          return op->emitError("controlled-R1 not yet supported");
+        auto ctrls = r1.getControls();
+        if (ctrls.size() > 1)
+          return op->emitError("R1 with >1 controls not yet supported");
         Value angleVal = r1.getParameters()[0];
         Value ref = r1.getTargets()[0];
         auto it = refInfo.find(ref);
@@ -634,29 +741,50 @@ static LogicalResult lowerQuantumFunction(func::FuncOp fn, MLIRContext *ctx) {
         int64_t nQubits = veq.getType().cast<quake::VeqType>().getSize();
         Value sv = veqToSv[veq];
         Value new_sv;
-        if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
-          // Constant path: fold trig at conversion time.
+        if (ctrls.size() == 1) {
+          // Controlled-R1: apply phase gate to tgt only when ctrl=|1⟩.
+          Value ctrlRef = ctrls[0];
+          auto cit = refInfo.find(ctrlRef);
+          if (cit == refInfo.end())
+            return op->emitError("CR1: control ref not found in refInfo");
+          int64_t ctrlQi = cit->second.second;
+          if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+            double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
+            if (r1.isAdj()) lam *= -1.0;
+            auto f32Ty = Float32Type::get(b.getContext());
+            Value c = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, (float)std::cos(lam)));
+            Value s = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, (float)std::sin(lam)));
+            new_sv = buildApplyCR1(b, loc, sv, nQubits, ctrlQi, qi, c, s);
+          } else {
+            auto f64Ty = b.getF64Type();
+            Value lam = asF64(b, loc, angleVal);
+            if (r1.isAdj()) {
+              Value neg1 = b.create<arith::ConstantOp>(loc, FloatAttr::get(f64Ty, -1.0));
+              lam = b.create<arith::MulFOp>(loc, lam, neg1);
+            }
+            auto [c, s] = buildCosSin(b, loc, lam);
+            new_sv = buildApplyCR1(b, loc, sv, nQubits, ctrlQi, qi, c, s);
+          }
+        } else if (auto cstOp = angleVal.getDefiningOp<arith::ConstantOp>()) {
+          // Uncontrolled, constant angle: fold trig at conversion time.
           double lam = cstOp.getValue().cast<FloatAttr>().getValueAsDouble();
           if (r1.isAdj()) lam *= -1.0;
           double c = std::cos(lam), s = std::sin(lam);
-          // R1(λ) = [[1, 0], [0, exp(iλ)]]
           new_sv = buildApplyUnitary(b, loc, sv, nQubits, qi,
               1.f, 0.f,       0.f, 0.f,
               0.f, 0.f, (float)c, (float)s);
         } else {
-          // Dynamic path: runtime angle via math.cos / math.sin.
+          // Uncontrolled, dynamic angle: runtime math.cos / math.sin.
           auto f64Ty = b.getF64Type();
           auto f32Ty = Float32Type::get(b.getContext());
           Value lam = asF64(b, loc, angleVal);
           if (r1.isAdj()) {
-            Value neg1 = b.create<arith::ConstantOp>(
-                loc, FloatAttr::get(f64Ty, -1.0));
+            Value neg1 = b.create<arith::ConstantOp>(loc, FloatAttr::get(f64Ty, -1.0));
             lam = b.create<arith::MulFOp>(loc, lam, neg1);
           }
           auto [c, s] = buildCosSin(b, loc, lam);
           Value zero = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 0.f));
           Value one  = b.create<arith::ConstantOp>(loc, FloatAttr::get(f32Ty, 1.f));
-          // R1(λ) = [[1, 0], [0, c+i·s]]
           new_sv = buildApplyUnitaryV(b, loc, sv, nQubits, qi,
               one, zero, zero, zero,
               zero, zero, c, s);

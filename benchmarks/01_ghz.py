@@ -6,8 +6,8 @@ for each subsequent qubit) across a range of qubit counts. Compilation is done
 once as setup; only the kernel call is timed.
 
 Usage:
-    python3 benchmarks/01_latency.py [options]
-    python3 benchmarks/01_latency.py --help
+    python3 benchmarks/01_ghz.py [options]
+    python3 benchmarks/01_ghz.py --help
 """
 
 import sys
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import cudaq
 
-from benchmarks.runner import benchmark_cli
+from q2i import benchmark_cli
 
 
 def make_ghz_kernel(n_qubits: int):

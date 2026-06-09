@@ -1,0 +1,19 @@
+# Apptainer definition file for quake2iree
+#
+# This file simply wraps the published Docker image so Apptainer can convert
+# it to a SIF.  The Docker image is built from .devcontainer/Dockerfile and
+# pushed to Docker Hub by the maintainer.
+#
+# Usage on HPC cluster (after the image has been pushed to Docker Hub):
+#   apptainer pull quake2iree.sif docker://marhvera/quake2iree:latest
+#
+# Or equivalently:
+#   apptainer build quake2iree.sif quake2iree.def
+#
+# See docs/hpc_apptainer.md for the full workflow.
+
+Bootstrap: docker
+From: marhvera/quake2iree:latest
+
+%runscript
+    exec "$@"

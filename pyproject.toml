@@ -1,0 +1,23 @@
+[project]
+name = "quake2iree"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "iree-base-compiler",
+    "iree-base-runtime",
+    "numpy",
+    "matplotlib",
+    "pytest",
+]
+
+[project.optional-dependencies]
+# Install with: uv sync --extra cuda
+cuda = [
+    "cuda-quantum-cu12>=0.13.0",
+]
+
+[tool.uv]
+# Do not install this repo as a Python package (it is a C++ tool with Python scripts).
+package = false
+# NVIDIA package index required for cuda-quantum.
+extra-index-url = ["https://pypi.nvidia.com"]

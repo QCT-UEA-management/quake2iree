@@ -7,11 +7,13 @@ quality plots with `plots.py`.
 ## Structure
 
 | File | Role |
-|---|---|
+| --- | --- |
 | `backends.py` | Backend registry — `IREEBackend` and `CUDAQBackend` descriptors |
 | `runner.py` | Timing harness — in-process compile + statistical timing loop |
-| `01_latency.py` | GHZ latency sweep across qubit counts and backends |
+| `01_ghz.py` | GHZ latency sweep across qubit counts and backends |
 | `02_parametric.py` | Hardware-efficient ansatz with runtime angles — amortisation sweep |
+| `03_qft.py` | Quantum Fourier Transform — O(n²) CR1 gates, compile-time constant angles |
+| `04_qaoa.py` | QAOA-MaxCut on a ring graph — parametric circuit, amortisation benchmark |
 | `plots.py` | Matplotlib plot generator from result CSVs |
 | `results/` | Committed result CSVs (one file per run / hardware config) |
 
@@ -36,7 +38,7 @@ can compare them without needing a GPU or CUDA driver.
 
 ```bash
 # Fixed-circuit benchmark (GHZ)
-python3 benchmarks/01_latency.py --no-cuda
+python3 benchmarks/01_ghz.py --no-cuda
 
 # Parametric benchmark (hardware-efficient ansatz with runtime angles)
 python3 benchmarks/02_parametric.py --no-cuda
@@ -59,27 +61,27 @@ Use `--backends` to select any combination explicitly. This overrides `--no-cuda
 #   cudaq-gpu  — CUDA-Q NVIDIA GPU simulator (requires CUDA driver)
 
 # IREE CPU vs CUDA-Q CPU only
-python3 benchmarks/01_latency.py --backends iree-cpu,cudaq-cpu
+python3 benchmarks/01_ghz.py --backends iree-cpu,cudaq-cpu
 
 # IREE CPU vs IREE CUDA (pure IREE comparison, no CUDA-Q)
-python3 benchmarks/01_latency.py --backends iree-cpu,iree-cuda
+python3 benchmarks/01_ghz.py --backends iree-cpu,iree-cuda
 
 # All backends — requires CUDA driver for iree-cuda and cudaq-gpu
-python3 benchmarks/01_latency.py
+python3 benchmarks/01_ghz.py
 ```
 
 ### 4. Customising the sweep
 
 ```bash
 # Larger qubit range and more timing samples (for a paper)
-python3 benchmarks/01_latency.py \
+python3 benchmarks/01_ghz.py \
     --qubit-counts 2,4,6,8,10,12,14,16,18,20 \
     --runs 500 \
     --warmup 50 \
     --backends iree-cpu,iree-cuda,cudaq-cpu,cudaq-gpu
 
 # Write results to a specific file
-python3 benchmarks/01_latency.py --output benchmarks/results/my_run.csv
+python3 benchmarks/01_ghz.py --output benchmarks/results/my_run.csv
 ```
 
 ### 5. Generating plots
@@ -87,11 +89,11 @@ python3 benchmarks/01_latency.py --output benchmarks/results/my_run.csv
 Add `--plot` to any command to produce PNGs alongside the CSV:
 
 ```bash
-python3 benchmarks/01_latency.py --no-cuda --plot
+python3 benchmarks/01_ghz.py --no-cuda --plot
 python3 benchmarks/02_parametric.py --no-cuda --plot
 ```
 
-`01_latency.py --plot` generates two figures:
+`01_ghz.py --plot` generates two figures:
 
 - `<name>.png` — kernel execution latency (median line, shaded to p95)
 - `<name>_compile.png` — IREE AOT compilation time vs qubit count
